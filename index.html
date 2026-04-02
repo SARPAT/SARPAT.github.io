@@ -30,10 +30,85 @@
     </div>
   </nav>
 
-  <!-- PAGE CONTENT -->
+  <!-- HERO SECTION -->
   <div class="container">
-    <h1>Saransh Patel</h1>
-    <p>Site under construction. Coming soon.</p>
+    <div class="hero">
+      <img src="./photosara.jpg" alt="Saransh Patel" class="hero-photo" />
+      <div class="hero-text">
+        <h1>Saransh Patel</h1>
+        <p class="muted">Undergraduate · Computer Science · ABES Engineering College</p>
+
+        <p>I am an undergraduate Computer Science student with a deep interest in
+        ML Systems and Performance Engineering. I spend most of my time trying
+        to understand how large language models actually run on hardware, what
+        makes inference fast, what makes it slow, and what can be done about it.</p>
+
+        <p>My research interests are centered on LLM inference optimization, CUDA
+        kernel engineering, GPU memory systems, and efficient AI deployment. I
+        am particularly drawn to the intersection of systems and machine learning
+        — the layer where software meets hardware and where performance decisions
+        have real consequences.</p>
+
+        <p>I am currently building my foundations through a structured self-study
+        path covering GPU architecture, CUDA programming, distributed training,
+        and inference systems. Alongside that, I work on hands-on projects
+        benchmarking and optimizing inference pipelines, profiling GPU kernels,
+        and experimenting with quantization techniques like INT8 and AWQ.</p>
+
+        <p>Outside of technical work, I believe in learning in public — sharing
+        what I build, what I measure, and what I learn along the way.</p>
+
+        <p>Go checkout my <a href="/readings.html">Readings</a> &amp; <a href="/blogs.html">Blogs</a> sections.
+        Let's connect: <a href="mailto:saranshappy@gmail.com">saranshappy@gmail.com</a> · <a href="https://x.com/SARAPATEL21" target="_blank">Twitter/X</a> · <a href="https://github.com/SARPAT" target="_blank">GitHub</a></p>
+      </div>
+    </div>
+
+    <hr>
+
+    <!-- PROJECTS SECTION -->
+    <h2>Projects</h2>
+    <p class="muted">Present in current build</p>
+
+    <!-- ===== PROJECTS =====
+         To ADD a project : copy one <li> block and paste it as a new <li>.
+         To REMOVE a project : delete the entire <li>...</li> block.
+         To EDIT a project : update the title, href, description, and tags inside the block.
+         ==================== -->
+    <ul>
+      <li class="project-entry">
+        <a href="https://github.com/SARPAT/RagAgent_document_chatbot" target="_blank" class="project-title">RAG Agent — Document Chatbot</a>
+        <p class="project-desc">A Retrieval-Augmented Generation chatbot for querying arXiv research papers. Built with LangChain, NVIDIA AI Endpoints, FAISS vector store, and Gradio.</p>
+        <div class="project-tags">
+          <span class="tag">Python</span>
+          <span class="tag">LangChain</span>
+          <span class="tag">RAG</span>
+          <span class="tag">NVIDIA</span>
+        </div>
+      </li>
+
+      <li class="project-entry">
+        <a href="https://github.com/SARPAT/Chakra" target="_blank" class="project-title">Chakra — Middleware Framework</a>
+        <p class="project-desc">Intelligent graceful degradation middleware for Node.js/Express apps. Routes requests to reduced-functionality fallbacks under load, using a physics-inspired priority model. 583 tests across 12 suites.</p>
+        <div class="project-tags">
+          <span class="tag">TypeScript</span>
+          <span class="tag">Node.js</span>
+          <span class="tag">Express</span>
+          <span class="tag">Middleware</span>
+        </div>
+      </li>
+    </ul>
+
+    <!-- RESEARCH SECTION — hidden until content is ready. Remove display:none to show. -->
+    <section style="display:none;">
+      <h2>Research</h2>
+      <p>Coming soon.</p>
+    </section>
+
+    <!-- PUBLICATIONS SECTION — hidden until content is ready. Remove display:none to show. -->
+    <section style="display:none;">
+      <h2>Publications</h2>
+      <p>Coming soon.</p>
+    </section>
   </div>
 
   <!-- FOOTER -->
