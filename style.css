@@ -196,6 +196,29 @@ footer .footer-links a:hover {
   font-family: 'Courier New', monospace;
 }
 
+/* ---- Back Link ---- */
+.back-link {
+  display: inline-block;
+  font-size: 0.9rem;
+  color: #6b7280;
+  margin-bottom: 1.5rem;
+}
+
+.back-link:hover {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+/* ---- About Block (title pages) ---- */
+.about-block {
+  margin-bottom: 2rem;
+}
+
+.about-desc {
+  margin-top: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+
 /* ---- Reading Section Blocks (readings.html hub) ---- */
 .reading-section-block {
   padding: 1rem 0;
