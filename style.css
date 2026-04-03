@@ -235,7 +235,7 @@ footer .footer-links a:hover {
 /* ---- Hero Section ---- */
 .hero {
   display: flex;
-  gap: 2rem;
+  gap: 1.5rem;
   align-items: flex-start;
   margin-bottom: 1rem;
 }
@@ -246,6 +246,7 @@ footer .footer-links a:hover {
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
+  margin-top: 2.5rem;
 }
 
 .hero-text {
