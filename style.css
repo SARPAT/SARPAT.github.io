@@ -238,16 +238,17 @@ footer .footer-links a:hover {
   gap: 1.5rem;
   align-items: flex-start;
   margin-bottom: 1rem;
+  position: relative;
 }
 
 .hero-photo {
-  width: 200px;
-  height: 200px;
+  width: 350px;
+  height: 350px;
   border-radius: 50%;
   object-fit: cover;
-  flex-shrink: 0;
-  margin-top: 2.5rem;
-  margin-left: -80px;
+  position: absolute;
+  left: -280px;
+  top: 0;
 }
 
 .hero-text {
@@ -308,6 +309,9 @@ footer .footer-links a:hover {
   }
 
   .hero-photo {
+    position: static;
+    width: 180px;
+    height: 180px;
     margin-left: 0;
   }
 }
