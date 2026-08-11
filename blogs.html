@@ -29,18 +29,35 @@
     <hr>
 
     <!-- ===== BLOG POSTS =====
-         To ADD a new post    : copy the sample <li> and paste it at the TOP (latest first).
-         To REMOVE a post     : delete the entire <li>...</li> line.
-         To EDIT a post       : update the title text and the Notion URL in href.
-         Notion URL format    : paste your published Notion page URL directly as the href.
-         target="_blank"      : always keep this — opens Notion in a new tab.
+         PUBLISHING FLOW (see HOW-TO-ADD-CONTENT.md section 1 for the full walkthrough):
+           1. Draft the post in Claude design.
+           2. Export it with the "Standalone HTML" option (NOT "Project archive").
+           3. Rename the downloaded file: lowercase, hyphens, .html
+              e.g. kv-cache-transitions.html
+           4. Drop it into the  blogs/  folder.
+           5. Copy the <li> block below, paste it at the TOP of the list, update the
+              href / title / date / description.
+           6. git add . && git commit -m "blog: <title>" && git push
+
+         href format : ./blogs/your-file-name.html   (local post — the normal case)
+                       https://...                    (external post — add target="_blank")
+
+         The date and description lines are optional; delete either one if not needed.
          ======================== -->
     <ul class="entry-list">
 
-      <!-- SAMPLE — replace title and href with your real Notion blog post -->
-      <li><a href="https://notion.so/your-blog-post-url-here" target="_blank">Title of Blog Post</a></li>
+      <!-- ===== COPY THIS BLOCK FOR A NEW POST =====
+      <li>
+        <a href="./blogs/your-file-name.html">Title of Blog Post</a>
+        <div class="entry-meta">DD Mon YYYY</div>
+        <p class="entry-desc">One-line summary of what the post covers.</p>
+      </li>
+      ============================================= -->
 
     </ul>
+
+    <!-- Delete this line once the first post is published. -->
+    <p class="muted">No posts published yet — first one is on the way.</p>
   </div>
 
   <!-- FOOTER -->

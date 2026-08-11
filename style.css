@@ -185,6 +185,21 @@ footer .footer-links a:hover {
   color: #2563eb;
 }
 
+/* ---- Blog entry metadata (date + summary under a post title) ---- */
+.entry-meta {
+  font-size: 0.8rem;
+  font-family: 'Courier New', monospace;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+.entry-desc {
+  font-size: 0.9rem;
+  color: #1a1a1a;
+  margin-top: 0.3rem;
+  margin-bottom: 0.2rem;
+}
+
 /* ---- Tags / Badges (for projects) ---- */
 .tag {
   display: inline-block;

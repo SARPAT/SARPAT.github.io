@@ -1,0 +1,29 @@
+<!--
+  ============================================================
+  SITE BACK-LINK BAR  —  for Claude design "Standalone HTML" exports
+  ============================================================
+
+  WHY: an exported post is a fully self-contained page. It carries its own
+  styling and knows nothing about this site, so a reader who lands on it has
+  no way back to the blog index. This bar adds that.
+
+  HOW TO USE:
+    1. Open your exported .html file in any text editor.
+    2. Find the <body> tag (near the top).
+    3. Paste the <div> below on the line straight after <body>.
+    4. Save. Done — nothing else in the exported file needs touching.
+
+  Every style is inline and every link is absolute (starts with /), so this
+  works no matter what CSS the exported page uses and no matter what the
+  post's filename is.
+
+  This file is a snippet only. It is not a post and is never linked from the
+  site — the leading underscore keeps it sorted out of the way in blogs/.
+  ============================================================
+-->
+
+<div style="font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.6; padding: 14px 20px; background: #fafaf8; border-bottom: 1px solid #e5e5e0; color: #1a1a1a; margin: 0;">
+  <a href="/blogs.html" style="color: #2563eb; text-decoration: none;">&larr; Blogs</a>
+  <span style="color: #6b7280;"> &middot; </span>
+  <a href="/" style="color: #2563eb; text-decoration: none;">Saransh Patel</a>
+</div>

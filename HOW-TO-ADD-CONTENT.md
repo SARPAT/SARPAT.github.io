@@ -10,7 +10,7 @@ No build step. No framework. Just edit HTML and push.
 
 | I want to...                        | File to open                                      |
 |-------------------------------------|---------------------------------------------------|
-| Add a new blog post                 | `blogs.html`                                      |
+| Add a new blog post                 | drop file in `blogs/` + edit `blogs.html`         |
 | Add a new book                      | `readings/books.html` + create new file in `readings/books/` |
 | Add a new read to an existing book  | `readings/books/your-book-file.html`              |
 | Add a new paper                     | `readings/research-papers.html` + create new file in `readings/papers/` |
@@ -28,20 +28,70 @@ No build step. No framework. Just edit HTML and push.
 
 ## 1. ADD A NEW BLOG POST
 
-**File:** `blogs.html`
+Blog posts are drafted in **Claude design**, exported as a single HTML file, and
+served directly from this repo. No Notion link, no build step — the exported file
+*is* the published post.
 
-1. Open `blogs.html`
-2. Find this comment:
+### Step A — Draft and export
+
+1. Write the post in Claude design.
+2. Click **Export HTML**.
+3. Choose **Standalone HTML** — *not* "Project archive".
+
+   > **Why Standalone HTML:** it produces one self-contained `.html` file with all
+   > CSS and images inlined. You copy that one file into `blogs/` and you are done.
+   > "Project archive" gives you a zip of loose project files that would need
+   > unpacking and relative-path fixing on every post. Standalone costs Claude
+   > credits; the archive is free. The credits are worth it here.
+
+4. Rename the downloaded file: **lowercase, hyphens instead of spaces, `.html`**
+   e.g. `kv-cache-transitions.html`
+   (Same naming rules as everything else on the site — see FILE NAMING RULES.)
+
+### Step B — Add the back-link bar (5 seconds, recommended)
+
+The exported page is fully standalone, so it has no site navbar — a reader who
+lands on it directly has no way back.
+
+1. Open `blogs/_paste-into-export.html` and copy the `<div>` block at the bottom.
+2. Open your exported post, find `<body>`, and paste the block on the line
+   straight after it.
+3. Save.
+
+Skip this if you do not mind the post being a dead end.
+
+### Step C — Publish
+
+1. Move the file into the `blogs/` folder.
+2. Open `blogs.html` and find this comment:
    ```
-   <!-- ===== BLOG POSTS =====
+   <!-- ===== COPY THIS BLOCK FOR A NEW POST =====
    ```
-3. Copy this line:
+3. Copy the block inside it, paste it at the TOP of the `<ul>` (latest first),
+   and uncomment it:
    ```html
-   <li><a href="https://notion.so/your-blog-post-url-here" target="_blank">Title of Blog Post</a></li>
+   <li>
+     <a href="./blogs/kv-cache-transitions.html">Measuring KV Cache Transitions</a>
+     <div class="entry-meta">21 Apr 2026</div>
+     <p class="entry-desc">One-line summary of what the post covers.</p>
+   </li>
    ```
-4. Paste it at the TOP of the `<ul>` list (above all existing entries)
-5. Replace the title text and Notion URL
-6. Save → push to GitHub
+4. Update the href, title, date, and description. The `entry-meta` and
+   `entry-desc` lines are optional — delete either if you do not want it.
+5. On your **first** post only: delete the "No posts published yet" line just
+   below the `</ul>`.
+6. Save → push to GitHub.
+
+### Linking an external post instead
+
+Same `<li>` block, but point the href at the full URL and add `target="_blank"`:
+
+```html
+<li>
+  <a href="https://likeable-mars-1d6.notion.site/your-page" target="_blank">Title</a>
+  <div class="entry-meta">21 Apr 2026</div>
+</li>
+```
 
 ---
 
@@ -225,6 +275,8 @@ SARPAT.github.io/
 ├── style.css               ← Shared styles (do not edit unless you know what you are doing)
 ├── HOW-TO-ADD-CONTENT.md  ← This file
 ├── docs/                   ← CP markdown files (for reference only)
+├── blogs/                  ← One file per post (Claude design → Standalone HTML export)
+│   └── _paste-into-export.html   ← Back-link snippet, not a post
 └── readings/
     ├── books.html          ← Books list
     ├── research-papers.html
