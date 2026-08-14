@@ -274,7 +274,8 @@ footer .footer-links a:hover {
 /* ---- Updates Feed ---- */
 .updates-feed {
   display: block;
-  max-height: 165px;
+  /* tall enough that two items with a starburst flag fit without scrolling on mobile */
+  max-height: 200px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #d6d6d0 transparent;
@@ -313,33 +314,36 @@ footer .footer-links a:hover {
   font-size: 1rem;
 }
 
-/* ---- "New" flag on the latest update ---- */
+/* ---- "New" starburst flag on the latest update ---- */
 .badge-new {
   /* inline-block keeps the link's underline from running through the badge */
   display: inline-block;
-  margin-left: 0.45rem;
-  padding: 0.05rem 0.4rem;
+  margin-left: 0.85rem;
+  width: 42px;
+  height: 42px;
+  line-height: 42px;
+  text-align: center;
   font-family: 'Courier New', monospace;
-  font-size: 0.62rem;
+  font-size: 0.6rem;
   font-weight: bold;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #ffffff;
   background-color: #dc2626;
-  border-radius: 3px;
-  vertical-align: 0.12em;
   text-decoration: none;
-  animation: badge-new-pulse 2.4s ease-in-out infinite;
+  vertical-align: -0.95em;
+  /* 12-point starburst, like a classic "new" sticker */
+  clip-path: polygon(50.0% 0.0%, 58.5% 18.1%, 75.0% 6.7%, 73.3% 26.7%, 93.3% 25.0%, 81.9% 41.5%, 100.0% 50.0%, 81.9% 58.5%, 93.3% 75.0%, 73.3% 73.3%, 75.0% 93.3%, 58.5% 81.9%, 50.0% 100.0%, 41.5% 81.9%, 25.0% 93.3%, 26.7% 73.3%, 6.7% 75.0%, 18.1% 58.5%, 0.0% 50.0%, 18.1% 41.5%, 6.7% 25.0%, 26.7% 26.7%, 25.0% 6.7%, 41.5% 18.1%);
+  animation: badge-new-spin 3s ease-in-out infinite;
 }
 
-@keyframes badge-new-pulse {
+/* Gentle throb + wobble, so the star reads as a sticker rather than a button. */
+@keyframes badge-new-spin {
   0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45);
+    transform: rotate(-8deg) scale(1);
   }
   50% {
-    opacity: 0.72;
-    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0);
+    transform: rotate(8deg) scale(1.12);
   }
 }
 
@@ -347,6 +351,7 @@ footer .footer-links a:hover {
 @media (prefers-reduced-motion: reduce) {
   .badge-new {
     animation: none;
+    transform: rotate(-8deg);
   }
 }
 
