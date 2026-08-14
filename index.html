@@ -69,7 +69,17 @@
     <section>
       <h2>New/Updates</h2>
       <div class="updates-feed">
+        <!-- ===== UPDATES =====
+             To ADD an update : copy a <li> block and paste it at the TOP (latest first).
+             The NEW flag     : add <span class="badge-new">New</span> just before </a>.
+                                Delete that span once the item is no longer new —
+                                keep it on the newest item only.
+             ==================== -->
         <ul class="updates-list">
+          <li class="updates-item">
+            <a href="/blogs/cacheblend/"><u>New blog: CacheBlend — reusing KV caches for RAG without losing cross-attention</u><span class="badge-new">New</span></a>
+          </li>
+
           <li class="updates-item">
             <a href="https://likeable-mars-1d6.notion.site/Training-a-Reasoning-Model-with-GRPO-on-AMD-ROCm-34212c2a6ba8803c8970d428db324d66?source=copy_link" target="_blank" rel="noopener noreferrer"><u>Fine-tuned Llama 3.1 8B Instruct on GSM8K using GRPO with Unsloth</u></a>
           </li>

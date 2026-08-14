@@ -313,6 +313,43 @@ footer .footer-links a:hover {
   font-size: 1rem;
 }
 
+/* ---- "New" flag on the latest update ---- */
+.badge-new {
+  /* inline-block keeps the link's underline from running through the badge */
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.62rem;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background-color: #dc2626;
+  border-radius: 3px;
+  vertical-align: 0.12em;
+  text-decoration: none;
+  animation: badge-new-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes badge-new-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45);
+  }
+  50% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0);
+  }
+}
+
+/* Respect users who ask the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  .badge-new {
+    animation: none;
+  }
+}
+
 /* ---- Project Entries ---- */
 .project-entry {
   list-style: none;
