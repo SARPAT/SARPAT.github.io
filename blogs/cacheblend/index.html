@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CacheBlend: reusing KV caches for RAG without losing cross-attention</title>
+<meta name="description" content="How CacheBlend fuses precomputed KV caches for RAG inputs by selectively recomputing about 15% of tokens per layer, cutting time-to-first-token by 2.2 to 3.3x with no measurable quality loss." />
+<link rel="canonical" href="https://sarpat.github.io/blogs/cacheblend/" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://sarpat.github.io/blogs/cacheblend/" />
+<meta property="og:title" content="CacheBlend: reusing KV caches for RAG without losing cross-attention" />
+<meta property="og:description" content="Selective KV recompute gives you the speed of full KV reuse and the quality of full prefill." />
+<meta property="og:image" content="https://sarpat.github.io/blogs/cacheblend/assets/figures/fig-01.svg" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="CacheBlend: reusing KV caches for RAG without losing cross-attention" />
+<meta name="twitter:description" content="Selective KV recompute gives you the speed of full KV reuse and the quality of full prefill." />
+<meta name="twitter:image" content="https://sarpat.github.io/blogs/cacheblend/assets/figures/fig-01.svg" />
+<link rel="stylesheet" href="styles/blog.css" />
+</head>
+<body>
+<article>
+
+  <a class="back" href="/blogs.html">&larr; Back to blog</a>
+
+  <h1>CacheBlend: reusing KV caches for RAG without losing cross-attention</h1>
+  <p class="subtitle">Recomputing about 15% of the tokens per layer buys you the speed of KV reuse and the quality of a full prefill.</p>
+  <p class="date">14 August 2026</p>
+
+  <p>Retrieval-augmented generation has an awkward cost structure. The part of the request people care about, the question, is short. The part that makes the answer correct, the retrieved context, is long. A typical RAG input stuffs six 512-token chunks in front of a question, and the model has to prefill all of it before it can emit a single token.</p>
+
+  <p>The obvious fix is to cache. Those chunks come from a fixed corpus and get retrieved again and again, so their KV caches could be computed once and reloaded later. The obvious fix does not work, and the reason is interesting: a chunk's KV cache depends on everything before it in the input. Precompute it in isolation and you have thrown away its cross-attention with the other chunks. The model gets faster and starts answering the wrong question.</p>
+
+  <p><strong>CacheBlend</strong> <a href="#ref-1">[1]</a>, from EuroSys '25, tackles exactly one problem: given several precomputed KV caches whose texts are concatenated in one input, how do you fuse them quickly and still get the answer that a full prefill would have given? Its answer is to recompute the KV of a small, carefully chosen subset of tokens on each layer and reuse everything else. On three open models and four datasets that cuts time-to-first-token by 2.2 to 3.3&times; and raises throughput by 2.8 to 5&times; against full recompute, with quality within 0.02 F1 or Rouge-L.</p>
+
+  
+  <p>This post walks through the whole thing, in twelve parts:</p>
+  <ol>
+    <li><a href="#why-prefill-dominates-rag">Why prefill dominates RAG</a>. Where the time actually goes.</li>
+    <li><a href="#prefill-and-the-kv-cache">Prefill and the KV cache</a>. The 60-second version, with the one property that matters later.</li>
+    <li><a href="#why-prefix-caching-saves-so-little">Why prefix caching saves so little</a>. It only ever helps the first chunk.</li>
+    <li><a href="#why-full-kv-reuse-answers-wrongly">Why full KV reuse answers wrongly</a>. A concrete failure, and what is missing from the attention matrix.</li>
+    <li><a href="#selective-kv-recompute">Selective KV recompute</a>. The key idea, at the granularity of one layer.</li>
+    <li><a href="#picking-the-tokens-to-recompute">Picking the tokens to recompute</a>. KV deviation, HKVD tokens, and gradual filtering.</li>
+    <li><a href="#making-the-recompute-free">Making the recompute free</a>. Pipelining it behind the KV load.</li>
+    <li><a href="#the-system">The system</a>. Controller, cache store, fusor.</li>
+    <li><a href="#implementation">Implementation</a>. Three interfaces inside vLLM.</li>
+    <li><a href="#results">Results</a>. The numbers, and which comparison each one is against.</li>
+    <li><a href="#limitations">Limitations</a>. What the paper does not claim.</li>
+    <li><a href="#takeaways">Takeaways</a>.</li>
+  </ol>
+  
+
+  <p>This is a walkthrough of the mechanism, not a survey of KV cache research. I assume you know what a transformer does and have at least glanced at an inference server. Everything technical here comes from the paper. Where I am interpreting rather than reporting, I say so.</p>
+
+  <h2 id="why-prefill-dominates-rag">Why prefill dominates RAG</h2>
+
+  <p>Before an LLM generates anything, prefill runs over the entire input and produces the KV cache: the key and value tensors for every token at every layer. Prefill delay is therefore time-to-first-token. It also grows super-linearly with input length, which is unfortunate given that RAG exists to make inputs longer.</p>
+
+  <p>The paper's reference point: on an input of four thousand tokens, a typical RAG context length, prefill takes about three seconds for Llama-34B and about six seconds for Llama-70B on a single A40. That is the user staring at an empty box. Prefill is also a throughput bottleneck, and other work has shown that removing the prefill phase can roughly double an inference system's throughput <a href="#ref-17">[17]</a>.</p>
+
+  <p>The saving grace is that RAG inputs are repetitive. Two different questions about the IT department pull the same employee list. Two questions about recent RAG papers pull the same papers. The context, which is most of the tokens, is reused constantly. So cache it.</p>
+
+  <h2 id="prefill-and-the-kv-cache">Prefill and the KV cache</h2>
+
+  <p>Prefill computes the KV cache layer by layer. On each layer the token embeddings are transformed into query, key and value vectors. K and V form that layer's KV cache. Q times K gives the attention matrix, the attention between each token and its preceding tokens. That matrix, normalised and masked, is multiplied with V, and the result passes through the rest of the layer to produce the embeddings the next layer sees.</p>
+
+  <p>Two consequences matter for the rest of this post. First, a token's KV depends on every token before it, and on nothing after it. Second, when you already have the KV cache of a prefix, prefill only has to compute the forward attention matrix, the attention between the new suffix tokens and the prefix, because that is what directly shapes the generated token.</p>
+
+  <div class="tip">
+    <strong>The property everything hinges on.</strong> A KV cache is only valid for the prefix it was computed under. Move a chunk to a different position, or put different text in front of it, and its KV values are stale in two separate ways: the positions are wrong, and the cross-attention with the new preceding text was never computed.
+  </div>
+
+  <h2 id="why-prefix-caching-saves-so-little">Why prefix caching saves so little</h2>
+
+  <p>Prefix caching is the safe version of KV reuse, and it is what vLLM <a href="#ref-4">[4]</a>, SGLang <a href="#ref-5">[5]</a> and RAGCache <a href="#ref-6">[6]</a> do. Precompute the KV cache of a chunk, and if that chunk shows up as the prefix of a later input, reuse it. Because a prefix's KV cache is unaffected by what follows, the output is identical to a full prefill. No quality risk at all.</p>
+
+  <p>The problem is arithmetic. A RAG input prepends several chunks, so exactly one of them is the prefix. With six retrieved chunks you skip the prefill of one and pay full price for five. The paper's measurements bear this out: prefix caching lands close to full recompute on multi-chunk inputs.</p>
+
+  <p>There is a second, less obvious cost. To cover more cases, prefix caching has to store a separate KV cache for the same chunk under each distinct prefix. At a fixed storage budget that means a higher miss rate than a scheme storing one cache per chunk.</p>
+
+  <p>So there are four ways to build the KV cache of a multi-chunk input, and they trade speed against quality:</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-01.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-01.svg" alt="Four ways to build the KV cache of a multi-chunk LLM input: full recompute, prefix caching, full KV reuse, and CacheBlend's selective recompute." />
+    </a>
+    <figcaption>Figure 1: The four options, redrawn from the paper. Empty cells are raw text prefilled now, blue hatching is KV reused from storage, red hatching is KV recomputed against this specific input. Full recompute (a) is the quality reference and the slowest. Prefix caching (b) only saves the first chunk. Full KV reuse (c) saves everything and loses cross-attention. CacheBlend (d) reuses every cache and refreshes a thin slice of each.</figcaption>
+  </figure>
+
+  <p>Read the figure column by column. The left group in each panel is what the scheme pulls from storage or from raw text, the right box is the KV cache the model actually decodes from. Panels (c) and (d) differ only in those few red cells, and that difference is the whole paper.</p>
+
+  <h2 id="why-full-kv-reuse-answers-wrongly">Why full KV reuse answers wrongly</h2>
+
+  <p>Full KV reuse, pioneered by PromptCache <a href="#ref-3">[3]</a>, reuses every chunk's KV cache regardless of position. It fixes the positional half of the staleness problem with buffers: to be able to place chunk C2 after chunk C1, you precompute C2 behind a dummy prefix at least as long as C1, so its positional information comes out right. The cost is that each chunk has to be precomputed once per position it might occupy.</p>
+
+  <p>The deeper half of the problem survives. The KV cache of a non-prefix chunk contains no cross-attention with the text in front of it, because that text was unknown at precompute time. Here is what that costs you:</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-02.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-02.svg" alt="A query about two football players where full KV recompute answers correctly and full KV reuse rambles." />
+    </a>
+    <figcaption>Figure 2: The paper's illustrative failure. One chunk holds Messi's World Cup goals, another holds Ronaldo's, and the question asks who scored more. Full prefill (b) compares them correctly. Full KV reuse (c) produces fluent text about World Cups that never makes the comparison, because the attention between the two chunks was never computed.</figcaption>
+  </figure>
+
+  <p>The failure mode is worth dwelling on, because it is not a garbled-output failure. The model stays fluent. It simply cannot relate 13 to 8, since nothing in its KV cache ever connected the two chunks. Any query that spans chunks is exposed: geography plus politics, statistics plus statistics, a spec plus a changelog.</p>
+
+  <p>Looking at the attention matrices makes the mechanism plain. Under full prefill there is a populated block of cross-attention between the two chunks. Under full KV reuse that block is empty, never computed, and the emptiness propagates into the forward attention matrix, the part that actually selects the next token. The paper also shows the aggregate version of this: as the number of retrieved chunks grows, the quality gap between full prefill and full KV reuse widens, because more chunks means more cross-referencing to lose.</p>
+
+  <div class="note">
+    <strong>In fairness to full KV reuse.</strong> It works fine when cross-attention between chunks is genuinely low, which is common for prompt templates, its intended target. The failure is specific to inputs where the chunks need to be read together, which is exactly what multi-hop RAG is.
+  </div>
+
+  <h2 id="selective-kv-recompute">Selective KV recompute</h2>
+
+  <p>Now the goal can be stated precisely. Full recompute is the quality reference; full reuse is the speed reference. We want to update a precomputed KV cache into something whose <em>forward attention matrix</em> is as close as possible to the fully recomputed one, while touching as little of it as possible.</p>
+
+  <p>Two quantities make that measurable. For a token j on layer i, the KV deviation is how far its cached KV sits from the fully recomputed value:</p>
+
+  
+  <div class="eq">Δkv(KV_i, KV_i^full)[j]  =  | KV_i[j] − KV_i^full[j] |</div>
+  <p>And for the layer as a whole, the attention deviation is the L2 norm of the difference between forward attention matrices:</p>
+  <div class="eq">Δattn(A_i, A_i^full)  =  || A_i − A_i^full ||₂</div>
+  <p>The objective is then simply: produce KV<sup>new</sup> from KV<sup>pre</sup> such that Δattn(A<sup>new</sup>, A<sup>full</sup>) is small on every layer, at minimum compute cost.</p>
+  
+
+  <p>Assume for a moment that we already know which tokens to refresh. What does refreshing them look like mechanically? Not skipping work inside a normal prefill, which transformers are not built to do, but this:</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-03.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-03.svg" alt="Inside one layer: full recompute on the left, masked selective recompute with expanded K and V on the right." />
+    </a>
+    <figcaption>Figure 3: One transformer layer, redrawn from the paper: full recompute (a) versus selective recompute (b). The mask reduces the layer input to the selected tokens, Q, K and V are computed for those tokens only, then K and V are expanded again with the reused entries so that attention still spans the whole input. Hatching marks re-used against re-computed KV.</figcaption>
+  </figure>
+
+  <p>Four steps per layer. Mask the layer input down to the selected tokens. Transform that reduced input into Q, K and V, which are now small. Expand K and V back to full length using the reused KV of the unselected tokens, so the attention matrix still covers attention between the selected tokens and everything else. Run the ordinary attention module to get the next layer's input.</p>
+
+  <p>The expansion step is the clever part. Only a couple of rows of the attention matrix get computed, but each row is complete, so the selected tokens do see the chunks in front of them. That is precisely the cross-attention that full KV reuse threw away.</p>
+
+  <p>Cost follows directly. Only the selected tokens go through the projections and attention, so recomputing r% of tokens per layer costs about r% of a full prefill. And because the changes assume very little about the transformer internals, they slot into many popular implementations.</p>
+
+  <p>One detail from the paper's footnotes deserves a mention: positional correctness is handled separately and cheaply. Under rotary positional embedding <a href="#ref-7">[7]</a>, moving a chunk to a new position means multiplying its K vectors by a rotation matrix, once, with negligible overhead. The reason this is sound is that a RoPE attention score between two tokens depends only on their relative distance, not on their absolute positions.</p>
+
+  
+  <div class="eq">q_(m+l) · k_m  =  Σ_i ( q[2i]·k[2i] + q[2i+1]·k[2i+1] ) · cos(l·θ_i)      depends on l, not on m</div>
+  
+
+  <h2 id="picking-the-tokens-to-recompute">Picking the tokens to recompute</h2>
+
+  <p>Which tokens, then? The intuition is to refresh the ones that are most wrong, that is, the ones with the highest KV deviation. The paper calls them <strong>HKVD tokens</strong>, for high KV deviation, and states the empirical finding as its first insight.</p>
+
+  <div class="tip">
+    <strong>Insight 1.</strong> On a given layer, recomputing the KV of a token with higher KV deviation reduces the layer's attention deviation by a greater amount. So if you can only afford 10% of the tokens, take the 10% with the highest KV deviation.
+  </div>
+
+  <p>This is measurable. Recompute the top-r% tokens by KV deviation and watch the average attention deviation fall as r rises. It falls fast at first and then flattens, and the early steep part is what tells you the selection is doing real work.</p>
+
+  <figure>
+    <a href="assets/figures/fig-04.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-04.svg" alt="Forward attention deviation against recompute ratio for three models, dropping steeply then flattening before twenty percent." />
+    </a>
+    <figcaption>Figure 4: Attention deviation against recompute ratio, for Mistral-7B, Yi-34B and Llama-70B on Musique. Schematic redraw of the paper's measured trend: what matters is the shape, a steep early drop from the highest-deviation tokens and a long flat tail past roughly 20%.</figcaption>
+  </figure>
+
+  <p>Why should a small fraction be enough? Attention sparsity. In an attention matrix, high attention typically occurs between only a small number of token pairs, a property studied repeatedly in transformer models <a href="#ref-14">[14]</a><a href="#ref-15">[15]</a>. The paper's own measurement matches: on a given layer, roughly 10 to 15% of tokens have KV deviation much higher than the rest.</p>
+
+  <p>The logic is nicely symmetric. A token with little cross-attention to other chunks barely changes when those chunks arrive, so its cached KV is already close to correct and recomputing it is wasted work. A token with strong cross-attention is exactly where the stale cache is wrong. Recompute those.</p>
+
+  <h3 id="the-chicken-and-egg-problem">The chicken-and-egg problem</h3>
+
+  <p>There is an obvious objection. KV deviation is defined against the fully recomputed KV cache. If you had that, you would not need any of this.</p>
+
+  <p>The way out is that HKVD tokens are not independent across layers.</p>
+
+  <div class="tip">
+    <strong>Insight 2.</strong> Tokens with the highest KV deviations on one layer are likely to have the highest KV deviations on the next layer. The paper measures Spearman rank correlation between neighbouring layers and finds it consistently high.
+  </div>
+
+  <p>The reason offered is that a token's input embedding changes slowly from layer to layer in transformer models, and KV is a linear transformation of that embedding, so KV inherits the similarity. Worth noting: this says the <em>ranking</em> of tokens is stable across layers. The attention matrices themselves can still differ a lot.</p>
+
+  <p>A naive exploitation would be to fully prefill layer 1, take its HKVD tokens, and reuse that set for all remaining layers. With 30-plus layers, that already saves most of the compute. But a single layer's ranking is a noisy estimate, especially for deep layers. So CacheBlend filters gradually instead:</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-05.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-05.svg" alt="Gradual filtering: layer 1 recomputes all tokens, and each later layer measures KV deviation only for the tokens selected on the previous layer, keeping a slightly smaller fraction each time." />
+    </a>
+    <figcaption>Figure 5: Gradual filtering, redrawn from the paper. Layer 1 is recomputed in full and yields the top r&#8321;% of tokens by KV deviation. Layer 2 recomputes only those and keeps the top r&#8322;%, with r&#8322; slightly smaller, and so on until the ratio settles at the target r%.</figcaption>
+  </figure>
+
+  <p>To read the figure: each layer has an updated-KV stack on the top row and the precomputed-KV stack it started from on the bottom row, one cell per token, hatched blue where reused and red where recomputed. Comparing the two gives the KV deviation bars, drawn only for the tokens that layer actually recomputed. The tallest of those become the selected HKVD tokens, and the grey arrows carry that selection into the next layer. Each stage recomputes strictly fewer tokens than the one before, and the candidate set only ever shrinks, so a token that keeps ranking high across several layers is the one that ends up being refreshed everywhere. That multi-layer agreement is what makes the selection more reliable than a single layer's ranking.</p>
+
+  <p>One memory question this raises: on the layer where deviation is measured, the KV space holds both the freshly updated KV and the precomputed KV. The paper notes the extra precomputed copy is discarded as soon as inference moves to the next layer, so the memory overhead is negligible.</p>
+
+  <h2 id="making-the-recompute-free">Making the recompute free</h2>
+
+  <p>Selective recompute is cheap, but it is not free, and it is pure addition on top of a scheme whose whole point was to compute nothing. This is where the system design earns its keep, via one observation: the recompute of a layer can start the moment the previous layer's KV cache has landed in GPU memory, because the token selection for a layer depends only on the previous layer's deviations. Loading and recomputing can therefore overlap.</p>
+
+  <p>If loading one layer's KV cache takes at least as long as recomputing one layer, the recompute disappears behind the load and TTFT is unchanged.</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-06.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-06.svg" alt="Two per-layer timelines: on Llama-7B the 3 ms recompute hides behind the 16 ms load; on Llama-70B the 7 ms recompute exceeds the 4 ms load." />
+    </a>
+    <figcaption>Figure 6: Whether the recompute is hidden depends on the model and the device. With Llama-7B and a 4K context, recomputing 15% of tokens takes 3 ms per layer against a 16 ms NVMe SSD load, so it is invisible (a). With Llama-70B, recompute is 7 ms against a 4 ms load, so part of it is exposed (b).</figcaption>
+  </figure>
+
+  <p>The two panels are the same mechanism with the balance tipped in opposite directions. In (a) the blue load bars are the critical path and the red recompute bars sit under them with room to spare; you could recompute rather more than 15% and still pay nothing extra. In (b) the compute is the critical path and the loader idles, so the exposed red time is real added delay.</p>
+
+  <p>Which means the recompute ratio should not be a constant. It should be chosen per model, per context length and per device, and that is what the loading controller does.</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-07.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-07.svg" alt="The loading controller's two estimators feeding two decisions: pick the recompute ratio for a fixed device, or pick the cheapest device for a fixed ratio." />
+    </a>
+    <figcaption>Figure 7: The loading controller. Two offline-profiled estimators answer two deployment questions: given a device, what recompute ratio hides behind the load, and given a ratio, which is the cheapest device that still hides it.</figcaption>
+  </figure>
+
+  <p>The estimators are deliberately simple. Recompute delay is the recompute ratio times the offline-profiled full prefill cost. Load delay is the KV size per token times the context length divided by the device's measured throughput.</p>
+
+  
+  <div class="eq">T_recompute(r%, LLM, L)  =  r% × Prefill(LLM, L)
+
+T_load(LLM, L, device)   =  PerTokenKVSize(LLM) × L / Throughput(device)</div>
+  
+
+  <p>For the first question the controller solves for the r where the two delays are equal, then takes the larger of that r and a quality floor r*. The paper puts r* at 15%, the smallest ratio that empirically shows negligible quality drop against full recompute. The floor matters: on a fast device such as CPU RAM the load is quick, so matching delays would suggest a tiny recompute ratio and quietly cost you quality. The floor stops that, at the price of a little extra delay.</p>
+
+  <p>The second question runs the same estimators backwards. Fix the ratio at 15%, estimate load delay and storage cost for every candidate device, keep the devices where recompute is at least as slow as loading, and pick the cheapest survivor. This is the part with real operational value: it tells you when a slower, cheaper tier is free, which is how you get to store far more KV cache for the same money.</p>
+
+  <div class="note">
+    <strong>Why this is more than a latency trick.</strong> Prefix caching wants KV caches in fast memory, and fast memory is small, so you cache less and miss more. CacheBlend has a compute budget it must spend anyway, so it can afford slow storage. The recompute is not just hidden, it pays for capacity.
+  </div>
+
+  <h2 id="the-system">The system</h2>
+
+  <p>Three components, sitting between the retriever and the inference engine.</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-08.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-08.svg" alt="CacheBlend's loading controller, KV cache store and fusor sitting between the retriever and the LLM inference engine." />
+    </a>
+    <figcaption>Figure 8: The system. The loading controller picks the recompute ratio and the storage tier, the KV cache store maps chunks to cached KV across memory and disk, and the fusor merges the caches layer by layer before handing a finished KV cache to the engine.</figcaption>
+  </figure>
+
+  <p>The <strong>KV cache store</strong> splits an input into text chunks, which are either reusable or new, and hashes each chunk to find its KV cache. The hashing follows vLLM's block hashing, and the splitting strategy is application-specific, matching prior work. Newly computed caches are written back, and when a device fills up the least recently used cache is evicted. The paper restricts itself to a single storage level, such as CPU RAM or SSD.</p>
+
+  <p>The <strong>fusor</strong> does the merging described earlier. Because layer i's token selection depends on layer i-1, it is inherently sequential: wait for the previous layer's recompute, take the KV that has arrived in the GPU queue, recompute at the ratio the controller chose, repeat.</p>
+
+  <p>Put together, one request looks like this:</p>
+
+  <figure data-wide="1">
+    <a href="assets/figures/fig-09.svg" target="_blank" rel="noopener">
+      <img src="assets/figures/fig-09.svg" alt="Sequence diagram of one request: query, retrieval, cache lookup, ratio selection, per-layer load and recompute, then decoding." />
+    </a>
+    <figcaption>Figure 9: One request, end to end. Steps 6 and 7 are the loop that matters: layer i+1's KV loads on one thread while layer i is recomputed on another, until every layer is fused.</figcaption>
+  </figure>
+
+  <p>Note what the engine sees at step 7. Not text, not a partially prefilled state, but a finished KV cache it can decode from. That is why this integrates with an existing serving stack instead of replacing it.</p>
+
+  <h2 id="implementation">Implementation</h2>
+
+  <p>CacheBlend is about 3K lines of Python on top of vLLM and PyTorch 2.0, and the code is open source <a href="#ref-2">[2]</a>. The layer-wise prefill is exposed through three interfaces: <code>fetch_kv</code>, which takes a text and a layer id and pulls that layer's KV cache into the GPU, returning -1 on a miss; <code>prefill_layer</code>, which performs the partial prefill for one layer and returns the next layer's input; and <code>synchronize</code>, called before each layer to guarantee its KV has actually arrived.</p>
+
+  <p>The interesting details are in the plumbing. A fetch hashes the text, looks it up in the KV store, then loads with <code>torch.load()</code> from disk or <code>torch.cuda()</code> from CPU memory. The per-layer input dictionary carries the original layer input, a <code>check_flag</code> saying whether this layer selects HKVD tokens, and the current <code>HKVD_indices</code>. When the flag is set, the tokens with the largest deviation between the newly computed and loaded KV become the new selection; when it is not, the partial prefill just uses the indices it was given. Two threads pipeline layer i's compute against layer i+1's fetch, and caches recomputed at runtime are moved to CPU and written back to disk in the background. Hash tables stay in CPU memory, which is affordable: about 16 MB per million chunks.</p>
+
+  <h2 id="results">Results</h2>
+
+  <p>The evaluation covers Mistral-7B <a href="#ref-18">[18]</a>, Yi-34B <a href="#ref-19">[19]</a> and Llama-70B <a href="#ref-20">[20]</a>, with 8-bit quantization on the two larger models, on Runpod machines with 128 GB RAM, two A40 GPUs and a 1 TB NVMe SSD measured at 4.8 GB/s. One GPU serves Mistral-7B and Yi-34B, two serve Llama-70B. Datasets: 2WikiMQA <a href="#ref-9">[9]</a> with 200 cases, Musique <a href="#ref-8">[8]</a> with 150, SAMSum <a href="#ref-10">[10]</a> with 200 and MultiNews <a href="#ref-11">[11]</a> with 60, following LongBench <a href="#ref-12">[12]</a> for metrics. Contexts are split into 512-token chunks, each request uses the top six chunks by L2 distance over Sentence-BERT embeddings <a href="#ref-13">[13]</a>, and quality is F1 for the QA datasets and Rouge-L for the summarisation ones.</p>
+
+  <p>The headline numbers, with the baseline each one is measured against:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Baseline</th>
+          <th>Delay</th>
+          <th>Throughput</th>
+          <th>Quality</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Full KV recompute</td>
+          <td>2.2 to 3.3&times; lower TTFT</td>
+          <td>up to 5&times; higher</td>
+          <td>within 0.02 F1 / Rouge-L</td>
+        </tr>
+        <tr>
+          <td>Prefix caching</td>
+          <td>lower TTFT at every request rate tested</td>
+          <td>up to 3.3&times; higher</td>
+          <td>0.01 to 0.03 drop</td>
+        </tr>
+        <tr>
+          <td>Full KV reuse</td>
+          <td>slightly higher TTFT</td>
+          <td>&mdash;</td>
+          <td>0.1 to 0.2 higher F1, 0.03 to 0.25 higher Rouge-L</td>
+        </tr>
+        <tr>
+          <td>MapReduce (LangChain)</td>
+          <td>2 to 5&times; lower TTFT</td>
+          <td>&mdash;</td>
+          <td>higher F1</td>
+        </tr>
+        <tr>
+          <td>MapRerank (LangChain)</td>
+          <td>slightly higher TTFT</td>
+          <td>&mdash;</td>
+          <td>much higher quality</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Read the table as a set of trades rather than a single win. Against full recompute and prefix caching, CacheBlend is faster at effectively equal quality. Against full KV reuse, it is marginally slower and far more accurate. Against the LangChain alternatives, it beats MapReduce on both axes, because MapReduce needs extra LLM calls to summarise each chunk, and beats MapRerank on quality, because scoring chunks independently ignores the dependencies between them.</p>
+
+  <p>The sensitivity analysis is the part I would look at first if I were deploying this. On Yi-34B across all four datasets, a recompute ratio anywhere from 5% to 18% costs at most 0.002 in F1 or Rouge-L against full recompute, which translates into 4.1 to 6.6&times; lower TTFT than full recompute and 3.4 to 6.1&times; lower than prefix caching. The gain also holds across chunk counts from 3 to 12, chunk lengths from 300 to 900 tokens, and batch sizes from 2 to 10. It grows with batch size, since prefill dominates more as batches get larger.</p>
+
+  <p>Storage matters too, in the direction you would expect from Figure 6. With the KV cache in RAM or on a slower disk, CacheBlend still reduces TTFT with minimal quality loss, and its advantage over full KV reuse narrows on slow storage, because both are then dominated by loading rather than compute.</p>
+
+  <div class="note">
+    <strong>One caveat on the comparison.</strong> The prefix caching baseline is idealised: the paper assumes no loading delay from RAM or SSD into the GPU for it. That makes prefix caching look better than it would be in practice, so the reported gaps are conservative.
+  </div>
+
+  <h2 id="limitations">Limitations</h2>
+
+  <p>The insights are transformer-specific. Gradual filtering relies on token embeddings changing slowly between layers, which is a property of transformer stacks. State-space architectures like Mamba <a href="#ref-21">[21]</a> and hybrids like Griffin <a href="#ref-22">[22]</a> are left to future work.</p>
+
+  <p>The evaluation is also narrower than the idea. Three models, four datasets, one quantization setting per model, one serving engine. Newer engines such as DistServe <a href="#ref-17">[17]</a> are untested, as is sharing KV caches across compute nodes, which is where a large deployment would want this to go.</p>
+
+  <p>And one structural limit worth stating plainly, since it is easy to miss: layer 1 is always recomputed in full. Selective recompute is a saving on the remaining 30-plus layers, not on the whole prefill. The reported ratios already account for this, but it does mean a very shallow model would benefit less.</p>
+
+  <h2 id="takeaways">Takeaways</h2>
+
+  <ol>
+    <li>A precomputed KV cache is wrong in two ways when it is not the prefix. Positions can be fixed with a rotation. Missing cross-attention has to be recomputed.</li>
+    <li>Only a small fraction of tokens carry that error. Attention is sparse, so 10 to 20% of tokens per layer hold most of the deviation, and recomputing those recovers most of the quality.</li>
+    <li>You can find those tokens without an oracle. High-deviation tokens stay high-deviation from layer to layer, so a full first layer plus gradual filtering is enough.</li>
+    <li>The extra compute can be free. Pipelined behind the per-layer KV load, it costs nothing in TTFT and buys the freedom to keep caches on cheap storage.</li>
+    <li>The engine does not need to change. CacheBlend hands over a finished KV cache, which is why it composes with cache compression <a href="#ref-16">[16]</a>, eviction and quantization work rather than competing with it.</li>
+  </ol>
+
+  <p>The framing I keep coming back to: full recompute buys quality with compute, full reuse buys speed with quality, and CacheBlend buys quality back with the one resource that was sitting idle anyway, a few milliseconds of GPU time behind a disk read.</p>
+
+  <div class="tip">
+    <strong>Get in touch.</strong> <a href="mailto:saranshappy@gmail.com">saranshappy@gmail.com</a>, or on <a href="https://x.com/SARAPATEL21">X</a>. Corrections and pushback are welcome, especially from anyone who has run selective recompute on a newer serving engine. The implementation lives in <a href="https://github.com/LMCache/LMCache">LMCache</a> if you want to try it yourself.
+  </div>
+
+  <h2 id="references">References</h2>
+
+  
+  <ol class="refs">
+    <li id="ref-1">J. Yao, H. Li, Y. Liu, S. Ray, Y. Cheng, Q. Zhang, K. Du, S. Lu, J. Jiang. CacheBlend: Fast Large Language Model Serving for RAG with Cached Knowledge Fusion. EuroSys '25. <a href="https://doi.org/10.1145/3689031.3696098">https://doi.org/10.1145/3689031.3696098</a></li>
+    <li id="ref-2">LMCache, the open-source implementation. <a href="https://github.com/LMCache/LMCache">https://github.com/LMCache/LMCache</a></li>
+    <li id="ref-3">I. Gim, G. Chen, S. Lee, N. Sarda, A. Khandelwal, L. Zhong. Prompt Cache: Modular Attention Reuse for Low-Latency Inference. 2023.</li>
+    <li id="ref-4">W. Kwon et al. Efficient Memory Management for Large Language Model Serving with PagedAttention (vLLM). SOSP 2023.</li>
+    <li id="ref-5">L. Zheng et al. Efficiently Programming Large Language Models using SGLang. <a href="https://arxiv.org/abs/2312.07104">https://arxiv.org/abs/2312.07104</a></li>
+    <li id="ref-6">C. Jin et al. RAGCache: Efficient Knowledge Caching for Retrieval-Augmented Generation. <a href="https://arxiv.org/abs/2404.12457">https://arxiv.org/abs/2404.12457</a></li>
+    <li id="ref-7">J. Su et al. RoFormer: Enhanced Transformer with Rotary Position Embedding. Neurocomputing 568:127063, 2024.</li>
+    <li id="ref-8">H. Trivedi, N. Balasubramanian, T. Khot, A. Sabharwal. MuSiQue: Multihop Questions via Single-hop Question Composition. 2022.</li>
+    <li id="ref-9">X. Ho, A. Nguyen, S. Sugawara, A. Aizawa. Constructing a Multi-hop QA Dataset for Comprehensive Evaluation of Reasoning Steps (2WikiMultihopQA). <a href="https://arxiv.org/abs/2011.01060">https://arxiv.org/abs/2011.01060</a></li>
+    <li id="ref-10">B. Gliwa, I. Mochol, M. Biesek, A. Wawer. SAMSum Corpus. <a href="https://arxiv.org/abs/1911.12237">https://arxiv.org/abs/1911.12237</a></li>
+    <li id="ref-11">A. Fabbri et al. Multi-News: A Large-Scale Multi-Document Summarization Dataset. <a href="https://arxiv.org/abs/1906.01749">https://arxiv.org/abs/1906.01749</a></li>
+    <li id="ref-12">Y. Bai et al. LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding. <a href="https://arxiv.org/abs/2308.14508">https://arxiv.org/abs/2308.14508</a></li>
+    <li id="ref-13">N. Reimers, I. Gurevych. Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. EMNLP 2019.</li>
+    <li id="ref-14">Z. Liu et al. Scissorhands: Exploiting the Persistence of Importance Hypothesis for LLM KV Cache Compression at Test Time. NeurIPS 36, 2024.</li>
+    <li id="ref-15">Z. Zhang et al. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. NeurIPS 36, 2024.</li>
+    <li id="ref-16">Y. Liu et al. CacheGen: Fast Context Loading for Language Model Applications. <a href="https://arxiv.org/abs/2310.07240">https://arxiv.org/abs/2310.07240</a></li>
+    <li id="ref-17">Y. Zhong et al. DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. <a href="https://arxiv.org/abs/2401.09670">https://arxiv.org/abs/2401.09670</a></li>
+    <li id="ref-18">A. Jiang et al. Mistral 7B. <a href="https://arxiv.org/abs/2310.06825">https://arxiv.org/abs/2310.06825</a></li>
+    <li id="ref-19">A. Young et al. Yi: Open Foundation Models by 01.AI. <a href="https://arxiv.org/abs/2403.04652">https://arxiv.org/abs/2403.04652</a></li>
+    <li id="ref-20">H. Touvron et al. LLaMA: Open and Efficient Foundation Language Models. <a href="https://arxiv.org/abs/2302.13971">https://arxiv.org/abs/2302.13971</a></li>
+    <li id="ref-21">A. Gu, T. Dao. Mamba: Linear-Time Sequence Modeling with Selective State Spaces. 2023.</li>
+    <li id="ref-22">S. De et al. Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models. 2024.</li>
+  </ol>
+  
+</article>
+</body>
+</html>

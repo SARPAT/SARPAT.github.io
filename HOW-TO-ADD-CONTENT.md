@@ -34,53 +34,78 @@ served directly from this repo. No Notion link, no build step — the exported f
 
 ### Step A — Draft and export
 
-1. Write the post in Claude design.
-2. Click **Export HTML**.
-3. Choose **Standalone HTML** — *not* "Project archive".
+Write the post in Claude design, then click **Export HTML**. Which option you
+want depends on whether the post has figures:
 
-   > **Why Standalone HTML:** it produces one self-contained `.html` file with all
-   > CSS and images inlined. You copy that one file into `blogs/` and you are done.
-   > "Project archive" gives you a zip of loose project files that would need
-   > unpacking and relative-path fixing on every post. Standalone costs Claude
-   > credits; the archive is free. The credits are worth it here.
+| Export option | Use it when | What you get |
+|---|---|---|
+| **Project archive** | the post has figures/diagrams (the usual case) | a zip containing `blog/index.html`, `blog/styles/`, `blog/assets/` |
+| **Standalone HTML** | plain text post, no figures | one self-contained `.html` file |
 
-4. Rename the downloaded file: **lowercase, hyphens instead of spaces, `.html`**
-   e.g. `kv-cache-transitions.html`
-   (Same naming rules as everything else on the site — see FILE NAMING RULES.)
+Both work. The archive keeps figures as separate SVG files, which is *better*
+for this site — they stay small, cacheable, and editable. Standalone inlines
+everything as base64, which bloats the file fast once images are involved.
 
-### Step B — Add the back-link bar (5 seconds, recommended)
+### Step B — Put the files in place
 
-The exported page is fully standalone, so it has no site navbar — a reader who
-lands on it directly has no way back.
+**If you exported a Project archive** (folder-per-post — the CacheBlend layout):
 
-1. Open `blogs/_paste-into-export.html` and copy the `<div>` block at the bottom.
-2. Open your exported post, find `<body>`, and paste the block on the line
-   straight after it.
-3. Save.
+1. Unzip it. Everything you need is inside the `blog/` folder.
+2. Create `blogs/your-post-slug/` (lowercase, hyphens — see FILE NAMING RULES).
+3. Copy **only** these three things into it:
+   ```
+   blog/index.html    →  blogs/your-post-slug/index.html
+   blog/styles/       →  blogs/your-post-slug/styles/
+   blog/assets/       →  blogs/your-post-slug/assets/
+   ```
+   The relative paths inside `index.html` already line up, so nothing needs
+   rewriting.
 
-Skip this if you do not mind the post being a dead end.
+   **Do not copy** `uploads/`, `support.js`, `.thumbnail`, `source/`, `data/`,
+   or the `*.dc.html` file. `uploads/` holds your source material (research
+   paper PDFs, screenshots) which must not be republished, and `*.dc.html` is
+   Claude design's internal editor format — it needs `support.js` and will not
+   render as a normal page.
 
-### Step C — Publish
+**If you exported Standalone HTML:** rename the file to
+`blogs/your-post-slug.html` and skip to Step C. Add the back-link bar from
+`blogs/_paste-into-export.html` (paste it just after `<body>`), since a
+standalone file has no way back to the site.
 
-1. Move the file into the `blogs/` folder.
-2. Open `blogs.html` and find this comment:
+### Step C — Fix the export's placeholders
+
+Exports ship with dummy URLs. In `index.html`, search for and replace:
+
+- `href="#"` on the `← Back to blog` link → `href="/blogs.html"`
+- every `https://example.com/blog/...` in the `<head>` (canonical, `og:url`,
+  `og:image`, `twitter:image`) → the real URL,
+  e.g. `https://sarpat.github.io/blogs/your-post-slug/`
+
+Leaving `example.com` in place breaks link previews when the post is shared and
+points search engines at a domain that is not yours.
+
+### Step D — Publish
+
+1. Open `blogs.html` and find this comment:
    ```
    <!-- ===== COPY THIS BLOCK FOR A NEW POST =====
    ```
-3. Copy the block inside it, paste it at the TOP of the `<ul>` (latest first),
+2. Copy the block inside it, paste it at the TOP of the `<ul>` (latest first),
    and uncomment it:
    ```html
    <li>
-     <a href="./blogs/kv-cache-transitions.html">Measuring KV Cache Transitions</a>
-     <div class="entry-meta">21 Apr 2026</div>
+     <a href="./blogs/cacheblend/">CacheBlend: reusing KV caches for RAG without losing cross-attention</a>
+     <div class="entry-meta">14 Aug 2026 · 16 min read</div>
      <p class="entry-desc">One-line summary of what the post covers.</p>
    </li>
    ```
-4. Update the href, title, date, and description. The `entry-meta` and
-   `entry-desc` lines are optional — delete either if you do not want it.
-5. On your **first** post only: delete the "No posts published yet" line just
-   below the `</ul>`.
-6. Save → push to GitHub.
+   Folder-per-post links end in a `/`; single-file posts end in `.html`.
+3. Use the post's own `<h1>` as the link text and its subtitle as the
+   description — `blog/data/metadata.json` in the zip has the title, subtitle,
+   date, and reading time already worked out.
+4. The `entry-meta` and `entry-desc` lines are optional — delete either if you
+   do not want it.
+5. Save → push to GitHub.
 
 ### Linking an external post instead
 
@@ -275,7 +300,11 @@ SARPAT.github.io/
 ├── style.css               ← Shared styles (do not edit unless you know what you are doing)
 ├── HOW-TO-ADD-CONTENT.md  ← This file
 ├── docs/                   ← CP markdown files (for reference only)
-├── blogs/                  ← One file per post (Claude design → Standalone HTML export)
+├── blogs/                  ← Published posts (from Claude design exports)
+│   ├── cacheblend/               ← One folder per post (archive export)
+│   │   ├── index.html
+│   │   ├── styles/
+│   │   └── assets/figures/
 │   └── _paste-into-export.html   ← Back-link snippet, not a post
 └── readings/
     ├── books.html          ← Books list

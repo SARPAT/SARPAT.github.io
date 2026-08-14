@@ -1,0 +1,99 @@
+/* CacheBlend blog. Tokens first: retune the theme here and nowhere else. */
+:root{
+  --bg:#ffffff;
+  --text:#1f2733;
+  --heading:#0d1117;
+  --muted:#6b7280;
+  --link:#1d4ed8;
+  --accent:#b45309;
+  --rule:#e5e7eb;
+  --surface:#f6f7f9;
+  --note-bg:#eef4fb;
+  --note-border:#4a7fb5;
+  --tip-bg:#fdf6e8;
+  --tip-border:#c08a2e;
+  --mono:ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --measure:768px;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--mono);
+  font-weight:400;
+  text-wrap:pretty;
+}
+
+article{
+  max-width:var(--measure);
+  margin:0 auto;
+  padding:3.5rem 1.25rem 6rem;
+}
+
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.back{display:inline-block;margin:0 0 2rem;font-size:13px;color:var(--muted)}
+.back:hover{color:var(--text)}
+
+h1{margin:0 0 .75rem;font-size:36px;line-height:1.25;font-weight:700;color:var(--heading)}
+.subtitle{margin:0 0 .6rem;font-size:20px;line-height:1.45;color:var(--muted)}
+.date{margin:0 0 2.75rem;font-size:13px;line-height:1.4;color:var(--muted)}
+
+h2{margin:3.5rem 0 1.25rem;font-size:25px;line-height:1.3;font-weight:700;color:var(--heading);scroll-margin-top:1.5rem}
+h3{margin:2.5rem 0 1rem;font-size:19px;line-height:1.35;font-weight:700;color:var(--heading);scroll-margin-top:1.5rem}
+
+p{margin:0 0 1.4em;font-size:17px;line-height:1.75}
+strong{color:var(--heading);font-weight:700}
+ol,ul{margin:0 0 1.6em;padding-left:1.8em;font-size:17px;line-height:1.7}
+li{margin:0 0 .5rem}
+article > ol a,article > ol a:link{color:var(--accent)}
+p a[href^="#ref-"],li a[href^="#ref-"]{color:var(--accent)}
+.refs a[href^="http"]{color:var(--link)}
+
+code{font-size:.92em;background:var(--surface);padding:1px 4px;border-radius:2px}
+
+figure{margin:2.75rem 0;padding:0}
+figure a{display:block}
+figure img{display:block;width:100%;height:auto}
+figcaption{margin-top:.9rem;font-size:13.5px;line-height:1.5;color:var(--muted)}
+
+.note,.tip{margin:2rem 0;padding:1rem 1.15rem;border-radius:3px;font-size:15px;line-height:1.65}
+.note{background:var(--note-bg);border-left:3px solid var(--note-border)}
+.tip{background:var(--tip-bg);border-left:3px solid var(--tip-border)}
+
+.eq{
+  margin:1.75rem 0;
+  padding:1rem;
+  background:var(--surface);
+  border:1px solid var(--rule);
+  border-radius:4px;
+  font-size:14px;
+  line-height:1.6;
+  overflow-x:auto;
+  white-space:pre;
+}
+
+.tablewrap{margin:1.75rem 0;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.55}
+th{text-align:left;font-weight:700;padding:.5rem;border-bottom:2px solid var(--rule);color:var(--heading)}
+td{padding:.5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+
+.refs{font-size:14px;line-height:1.7;word-break:break-word}
+.refs li{margin:0 0 .6rem}
+.refs a{color:var(--link)}
+
+@media (min-width:1400px){
+  figure[data-wide="1"]{width:960px;margin-left:-116px}
+}
+@media (max-width:600px){
+  h1{font-size:27px}
+  h2{font-size:21px}
+  h3{font-size:18px}
+  p,ol,ul{font-size:15.5px}
+  .eq{font-size:13px}
+  figcaption{font-size:13px}
+}
