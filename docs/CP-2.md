@@ -202,7 +202,7 @@ saranshappy@gmail.com · GitHub · X · CV
 ```
 
 CV opens in new tab via:
-`https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview`
+`https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview`
 
 ---
 
@@ -215,7 +215,7 @@ Keep this comment at the top of `index.html` body, just after `<body>`:
   Email       : saranshappy@gmail.com
   Twitter/X   : https://x.com/SARAPATEL21
   GitHub      : https://github.com/SARPAT
-  CV Link     : https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview
+  CV Link     : https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview
   Photo       : photosara.jpg
   ======================================= -->
 ```

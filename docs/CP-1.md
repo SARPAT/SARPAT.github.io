@@ -259,7 +259,7 @@ It is the same across all pages. Only the `active` class changes per page.
       <li><a href="/" class="active">Home</a></li>
       <li><a href="/readings.html">Readings</a></li>
       <li><a href="/blogs.html">Blogs</a></li>
-      <li><a href="https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview" target="_blank">CV</a></li>
+      <li><a href="https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview" target="_blank">CV</a></li>
     </ul>
   </div>
 </nav>
@@ -297,7 +297,7 @@ Example structure every page should follow:
         <li><a href="/">Home</a></li>
         <li><a href="/readings.html">Readings</a></li>
         <li><a href="/blogs.html">Blogs</a></li>
-        <li><a href="https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview" target="_blank">CV</a></li>
+        <li><a href="https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview" target="_blank">CV</a></li>
       </ul>
     </div>
   </nav>
@@ -315,7 +315,7 @@ Example structure every page should follow:
         <a href="mailto:saranshappy@gmail.com">saranshappy@gmail.com</a>
         <a href="https://github.com/SARPAT" target="_blank">GitHub</a>
         <a href="https://x.com/SARAPATEL21" target="_blank">X</a>
-        <a href="https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview" target="_blank">CV</a>
+        <a href="https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview" target="_blank">CV</a>
       </div>
     </div>
   </footer>

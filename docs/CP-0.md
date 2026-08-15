@@ -17,7 +17,7 @@ To update any detail in the future, change it here and update the corresponding 
   Email       : saranshappy@gmail.com
   Twitter/X   : https://x.com/SARAPATEL21
   GitHub      : https://github.com/SARPAT
-  CV Link     : https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview
+  CV Link     : https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview
   Photo       : photosara.jpg
   ======================================= -->
 ```
@@ -107,7 +107,7 @@ Create every file listed above. All HTML files except `index.html` should contai
   Email       : saranshappy@gmail.com
   Twitter/X   : https://x.com/SARAPATEL21
   GitHub      : https://github.com/SARPAT
-  CV Link     : https://drive.google.com/file/d/1dKrvHeXV_Ry9O5daPK3I3dcJsuFY_GEu/preview
+  CV Link     : https://drive.google.com/file/d/1E84YgSEH-cLGb34ualM1vSV6fM-aAnL7/preview
   Photo       : photosara.jpg
   ======================================= -->
 
