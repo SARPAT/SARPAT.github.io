@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html><head>
+
+
+
+
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CacheClip: making RAG prefill 3.33x faster without giving up the answer</title><meta name="description" content="CacheClip accelerates RAG prefill by 3.33x using a 135M-parameter auxiliary model to choose which KV cache entries the primary model must recompute."><link rel="canonical" href="https://sarpat.github.io/blogs/cacheclip/"><meta property="og:type" content="article"><meta property="og:url" content="https://sarpat.github.io/blogs/cacheclip/"><meta property="og:title" content="CacheClip: making RAG prefill 3.33x faster without giving up the answer"><meta property="og:description" content="A 135M-parameter helper model decides which KV cache entries the 14B model actually needs to recompute."><meta property="og:site_name" content="Saransh Patel"><meta property="og:image" content="https://sarpat.github.io/blogs/cacheclip/og-cover.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="CacheClip: making RAG prefill 3.33x faster without giving up the answer"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="CacheClip: making RAG prefill 3.33x faster without giving up the answer"><meta name="twitter:description" content="A 135M-parameter helper model decides which KV cache entries the 14B model actually needs to recompute."><meta name="twitter:image" content="https://sarpat.github.io/blogs/cacheclip/og-cover.png"><meta name="twitter:image:alt" content="CacheClip: making RAG prefill 3.33x faster without giving up the answer"><style>
+    .sc-placeholder{background:color-mix(in srgb,currentColor 8%,transparent);
+      border:1px solid color-mix(in srgb,currentColor 50%,transparent);
+      border-radius:2px;box-sizing:border-box;overflow:hidden}
+    @keyframes sc-shine{0%{background-position:100% 50%}100%{background-position:0% 50%}}
+    html.sc-dc-streaming .sc-placeholder,
+    html.sc-dc-streaming .sc-interp.sc-missing{position:relative;
+      background:color-mix(in srgb,currentColor 5%,transparent);
+      border-color:transparent}
+    html.sc-dc-streaming .sc-placeholder::before,
+    html.sc-dc-streaming .sc-interp.sc-missing::before{content:'';
+      position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(90deg,rgba(217,119,87,0) 25%,rgba(247,225,211,.95) 37%,rgba(217,119,87,0) 63%);
+      background-size:400% 100%;animation:sc-shine 1.4s ease infinite}
+    html.sc-dc-streaming .sc-placeholder:nth-child(n+9 of .sc-placeholder)::before,
+    html.sc-dc-streaming .sc-interp.sc-missing:nth-child(n+9 of .sc-interp.sc-missing)::before{animation:none;
+      background:color-mix(in srgb,currentColor 8%,transparent)}
+    .sc-placeholder-error{padding:4px 8px;font:11px/1.4 ui-monospace,monospace;
+      color:color-mix(in srgb,currentColor 70%,transparent);word-break:break-word}
+    .sc-interp.sc-missing{display:inline-block;width:2em;height:1em;overflow:hidden;
+      vertical-align:text-bottom;background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;color:transparent;
+      user-select:none}
+    .sc-interp.sc-unresolved{font-family:ui-monospace,monospace;font-size:.85em;
+      color:color-mix(in srgb,currentColor 50%,transparent);
+      background:color-mix(in srgb,currentColor 10%,transparent);border-radius:3px;
+      padding:0 3px}
+    .sc-host.sc-has-error{position:relative}
+    .sc-logic-error{position:absolute;top:8px;left:8px;z-index:2147483647;max-width:60ch;
+      padding:6px 10px;background:#b00020;color:#fff;font:12px/1.4 ui-monospace,monospace;
+      border-radius:4px;white-space:pre-wrap;pointer-events:none}
+    /* Mirrors PRINT_BASELINE_CSS in apps/web deck-stage-export.ts — keep both
+       in sync until dc-runtime regains a build step. */
+    @media print {
+      @page { margin: 0.5cm; }
+      figure, table { break-inside: avoid; }
+      #dc-root, #dc-root > .sc-host { height: auto; }
+      *, *::before, *::after {
+        print-color-adjust: exact; -webkit-print-color-adjust: exact;
+        backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        animation-delay: -99s !important; animation-duration: .001s !important;
+        animation-iteration-count: 1 !important; animation-fill-mode: both !important;
+        animation-play-state: running !important; transition-duration: 0s !important;
+      }
+    }
+  </style><style>x-dc{display:none!important}</style><style>html,body{height:100%;margin:0}#dc-root,#dc-root>.sc-host{height:100%}</style><style data-dc-tpl="2">
+:root{
+--bg:#ffffff;--text:#1f2733;--heading:#0d1117;--muted:#6b7280;--link:#1d4ed8;--accent:#b45309;
+--rule:#e5e7eb;--surface:#f6f7f9;--note-bg:#eef4fb;--note-border:#4a7fb5;--tip-bg:#fdf6e8;--tip-border:#c08a2e;
+--ink:#2b2f36;--mem:#2f6fb3;--comp:#b8433a;--ann:#2e7d4f;
+--mono:ui-monospace,SFMono-Regular,"JetBrains Mono","IBM Plex Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3{scroll-margin-top:1.5rem}
+li::marker{color:var(--muted)}
+</style></head>
+<body>
+<div id="dc-root"><div class="sc-host" data-sc-name="bundle"><svg data-dc-tpl="3" width="0" height="0" aria-hidden="true" style="position: absolute;">
+  <defs data-dc-tpl="4">
+    <filter data-dc-tpl="5" id="rough" x="-6%" y="-6%" width="112%" height="112%">
+      <feTurbulence data-dc-tpl="6" type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"></feTurbulence>
+      <feDisplacementMap data-dc-tpl="7" in="SourceGraphic" in2="n" scale="1.8" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>
+    </filter>
+    <marker data-dc-tpl="8" id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path data-dc-tpl="9" d="M0,0.6 L9.4,5 L0,9.4 z" fill="#2b2f36"></path></marker>
+    <marker data-dc-tpl="10" id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path data-dc-tpl="11" d="M0,0.6 L9.4,5 L0,9.4 z" fill="#2e7d4f"></path></marker>
+    <marker data-dc-tpl="12" id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path data-dc-tpl="13" d="M0,0.6 L9.4,5 L0,9.4 z" fill="#2f6fb3"></path></marker>
+    <marker data-dc-tpl="14" id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path data-dc-tpl="15" d="M0,0.6 L9.4,5 L0,9.4 z" fill="#b8433a"></path></marker>
+  </defs></svg><article data-dc-tpl="16" style="max-width: 800px; margin: 0px auto; padding: 3.5rem 1.25rem 6rem; font-size: clamp(15px, 1.55vw, 17px); line-height: 1.75; text-wrap: pretty;">
+
+  <a data-dc-tpl="17" href="/blogs.html" style="font-size: 13px; color: var(--muted);">← Back to blog</a>
+
+  <h1 data-dc-tpl="18" style="font-size: clamp(26px, 4.1vw, 37px); line-height: 1.25; font-weight: 700; color: var(--heading); margin: 2rem 0px 0.75rem;">CacheClip: making RAG prefill 3.33× faster without giving up the answer</h1>
+
+  <p data-dc-tpl="19" style="font-size: clamp(17px, 2vw, 20px); line-height: 1.45; color: var(--muted); margin: 0px 0px 1rem;">How a 135M-parameter helper model decides which KV cache entries the 14B model actually needs to recompute.</p>
+
+  <p data-dc-tpl="20" style="font-size: 13px; color: var(--muted); margin: 0px 0px 2.5rem;">August 2026 · a walkthrough of <a data-dc-tpl="21" href="https://arxiv.org/abs/2510.10129">arXiv:2510.10129</a></p>
+
+  <p data-dc-tpl="22" style="margin: 0px 0px 1.35em;">If you run a RAG system in production, prefill is where your latency budget goes to die. A single request carries four to sixteen thousand tokens of retrieved context, attention cost grows quadratically with that length, and the user sees nothing until the first token comes out.<sup data-dc-tpl="23"><a data-dc-tpl="24" href="#ref-1" style="color: var(--accent); font-size: 0.72em;">[1]</a></sup></p>
+
+  <p data-dc-tpl="25" style="margin: 0px 0px 1.35em;">The obvious fix is to precompute the KV cache for every chunk in your corpus once, then glue the caches together at request time. The obvious fix does not work. Chunks encoded in isolation never attended to each other, and each one carries its own attention sink. Quality falls off a cliff on exactly the queries RAG exists to answer: the ones that need evidence from more than one document.</p>
+
+  <p data-dc-tpl="26" style="margin: 0px 0px 1.35em;"><strong data-dc-tpl="27" style="color: var(--heading);">CacheClip</strong> is a framework from Intel that fixes both problems without touching the weights of the model you are serving. Its central move is unusual: it hands the question of "which tokens matter" to a separate 135M-parameter model running on the CPU, and that tiny model turns out to be a better predictor of the 14B model's deep-layer attention than the 14B model's own early layers.</p>
+
+  <p data-dc-tpl="28" style="margin: 0px 0px 0.75em;">This post is in eleven parts:</p>
+  <ol data-dc-tpl="29" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.75rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="30"><a data-dc-tpl="31" href="#ttft" style="color: var(--accent);">The TTFT problem in RAG</a>. Why long retrieved context is a systems problem, not a modeling one.</li>
+    <li data-dc-tpl="32"><a data-dc-tpl="33" href="#two-failures" style="color: var(--accent);">Two failures, not one</a>. Independent chunk caches break in two independent ways.</li>
+    <li data-dc-tpl="34"><a data-dc-tpl="35" href="#reuse-landscape" style="color: var(--accent);">The reuse landscape</a>. Prefix caching, direct concat, calibration, selective recompute, and what each one costs.</li>
+    <li data-dc-tpl="36"><a data-dc-tpl="37" href="#token-selection" style="color: var(--accent);">Why token selection is the hard part</a>. And why CacheBlend's early-layer signal is the wrong signal.</li>
+    <li data-dc-tpl="38"><a data-dc-tpl="39" href="#small-models" style="color: var(--accent);">Small models know what big models look at</a>. The empirical result the whole design rests on.</li>
+    <li data-dc-tpl="40"><a data-dc-tpl="41" href="#how-it-works" style="color: var(--accent);">How CacheClip works</a>. Shared prefix, auxiliary-guided selection, sliding-window grouping, CPU/GPU split.</li>
+    <li data-dc-tpl="42"><a data-dc-tpl="43" href="#results" style="color: var(--accent);">Results</a>. RULER and LongBench, plus the recomputation ratio and sequence length sweeps.</li>
+    <li data-dc-tpl="44"><a data-dc-tpl="45" href="#ablation" style="color: var(--accent);">Which piece does the work</a>. The two components own different benchmarks.</li>
+    <li data-dc-tpl="46"><a data-dc-tpl="47" href="#speed" style="color: var(--accent);">Where the 3.33× comes from</a>. The latency breakdown at 16K tokens.</li>
+    <li data-dc-tpl="48"><a data-dc-tpl="49" href="#limitations" style="color: var(--accent);">When not to use this</a>. Honest limits.</li>
+    <li data-dc-tpl="50"><a data-dc-tpl="51" href="#takeaways" style="color: var(--accent);">Takeaways</a>.</li>
+  </ol>
+
+  <p data-dc-tpl="52" style="margin: 0px 0px 1.35em;">This is a systems post. It assumes you know what a KV cache is and roughly how a transformer prefill works. It does not assume you have read the paper. Every number below comes from the paper<sup data-dc-tpl="53"><a data-dc-tpl="54" href="#ref-1" style="color: var(--accent); font-size: 0.72em;">[1]</a></sup> and I flag the one place where the paper's own numbers disagree with each other.</p>
+
+  <figure data-dc-tpl="55" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="56" viewBox="0 0 900 320" width="100%" role="img" aria-label="Full attention prefill takes 5.641 seconds at 16K tokens. CacheClip reuses about 80 percent of the precomputed cache and recomputes about 20 percent, taking 1.695 seconds.">
+      <g data-dc-tpl="57" filter="url(#rough)" fill="none" stroke-width="1.6">
+        <rect data-dc-tpl="58" x="24" y="48" width="46" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="59" x="82" y="48" width="62" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="60" x="152" y="48" width="62" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="61" x="222" y="48" width="62" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="62" x="292" y="48" width="62" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="63" d="M362 72 L398 72" stroke="#2b2f36" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="64" x="408" y="42" width="268" height="60" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <path data-dc-tpl="65" d="M684 72 L718 72" stroke="#2b2f36" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="66" x="728" y="42" width="150" height="60" rx="6" stroke="#2b2f36" fill="#fafbfc"></rect>
+        <rect data-dc-tpl="67" x="24" y="198" width="46" height="48" rx="5" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="68" x="82" y="198" width="62" height="48" rx="5" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="69" x="152" y="198" width="62" height="48" rx="5" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="70" x="222" y="198" width="62" height="48" rx="5" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="71" x="292" y="198" width="62" height="48" rx="5" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <path data-dc-tpl="72" d="M362 222 L398 222" stroke="#2b2f36" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="73" x="408" y="192" width="268" height="60" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="74" x="420" y="204" width="146" height="36" rx="4" stroke="#2f6fb3" fill="#f2f7fc" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="75" x="574" y="204" width="90" height="36" rx="4" stroke="#b8433a" fill="#fdece9" stroke-width="1.3"></rect>
+        <path data-dc-tpl="76" d="M684 222 L718 222" stroke="#2b2f36" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="77" x="728" y="192" width="150" height="60" rx="6" stroke="#2b2f36" fill="#fafbfc"></rect>
+        <path data-dc-tpl="78" d="M540 292 C 560 288, 590 276, 606 258" stroke="#2e7d4f" stroke-dasharray="5 4" stroke-width="1.2" marker-end="url(#ahg)"></path>
+      </g>
+      <g data-dc-tpl="79" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="80" x="24" y="30" font-size="11.5" fill="#6b7280" letter-spacing="1.2">1 · FULL ATTENTION PREFILL</text>
+        <text data-dc-tpl="81" x="47" y="78" font-size="13" text-anchor="middle">Q</text>
+        <text data-dc-tpl="82" x="113" y="78" font-size="13" text-anchor="middle">C1</text>
+        <text data-dc-tpl="83" x="183" y="78" font-size="13" text-anchor="middle">C2</text>
+        <text data-dc-tpl="84" x="253" y="78" font-size="13" text-anchor="middle">C3</text>
+        <text data-dc-tpl="85" x="323" y="78" font-size="13" text-anchor="middle">C4</text>
+        <text data-dc-tpl="86" x="542" y="66" font-size="12.5" text-anchor="middle" fill="#b8433a">Primary LLM prefill</text>
+        <text data-dc-tpl="87" x="542" y="86" font-size="11" text-anchor="middle" fill="#6b7280">compute K and V for all ~16K tokens</text>
+        <text data-dc-tpl="88" x="803" y="70" font-size="17" text-anchor="middle">5.641 s</text>
+        <text data-dc-tpl="89" x="803" y="89" font-size="10.5" text-anchor="middle" fill="#6b7280">TTFT baseline</text>
+        <text data-dc-tpl="90" x="24" y="180" font-size="11.5" fill="#6b7280" letter-spacing="1.2">2 · CACHECLIP</text>
+        <text data-dc-tpl="91" x="47" y="228" font-size="13" text-anchor="middle">Q</text>
+        <text data-dc-tpl="92" x="113" y="228" font-size="13" text-anchor="middle">C1</text>
+        <text data-dc-tpl="93" x="183" y="228" font-size="13" text-anchor="middle">C2</text>
+        <text data-dc-tpl="94" x="253" y="228" font-size="13" text-anchor="middle">C3</text>
+        <text data-dc-tpl="95" x="323" y="228" font-size="13" text-anchor="middle">C4</text>
+        <text data-dc-tpl="96" x="82" y="266" font-size="10.5" fill="#2f6fb3">KV caches precomputed offline</text>
+        <text data-dc-tpl="97" x="493" y="227" font-size="11.5" text-anchor="middle" fill="#2f6fb3">reuse ~80%</text>
+        <text data-dc-tpl="98" x="619" y="221" font-size="10.5" text-anchor="middle" fill="#b8433a">recompute</text>
+        <text data-dc-tpl="99" x="619" y="234" font-size="10.5" text-anchor="middle" fill="#b8433a">~20%</text>
+        <text data-dc-tpl="100" x="803" y="220" font-size="17" text-anchor="middle">1.695 s</text>
+        <text data-dc-tpl="101" x="803" y="239" font-size="11" text-anchor="middle" fill="#2e7d4f">3.33× faster</text>
+        <text data-dc-tpl="102" x="408" y="296" font-size="11" fill="#2e7d4f">the tiny model picking that 20% runs on the head node CPU,</text>
+        <text data-dc-tpl="103" x="408" y="310" font-size="11" fill="#2e7d4f">so the GPU never sees the extra work</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="104" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 1: The whole pitch in one picture. At 16K input tokens on a single NVIDIA L20, full prefill costs 5.641 s. CacheClip reuses precomputed chunk caches and recomputes roughly a fifth of the tokens, reaching first token in 1.695 s.</figcaption>
+  </figure>
+
+  <h2 data-dc-tpl="105" id="ttft" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">1. The TTFT problem in RAG</h2>
+
+  <p data-dc-tpl="106" style="margin: 0px 0px 1.35em;">RAG makes the prompt long on purpose. That is the whole mechanism: you prepend retrieved evidence so the model can answer from something other than its weights. The cost lands entirely on prefill.</p>
+
+  <ul data-dc-tpl="107" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="108"><strong data-dc-tpl="109" style="color: var(--heading);">Typical RAG request: 4K to 16K input tokens.</strong> That is the range the paper targets, and it matches most production retrieval setups.<sup data-dc-tpl="110"><a data-dc-tpl="111" href="#ref-1" style="color: var(--accent); font-size: 0.72em;">[1]</a></sup></li>
+    <li data-dc-tpl="112"><strong data-dc-tpl="113" style="color: var(--heading);">Attention is quadratic in sequence length.</strong> Going from 4K to 16K is 4× the tokens and roughly 16× the attention work.</li>
+    <li data-dc-tpl="114"><strong data-dc-tpl="115" style="color: var(--heading);">The user waits for all of it.</strong> Time to first token is dominated by prefill, not decode.</li>
+    <li data-dc-tpl="116"><strong data-dc-tpl="117" style="color: var(--heading);">And most of that work is repeated.</strong> A knowledge base is finite. The same chunks get retrieved over and over across different queries, and you pay full price for them every time.</li>
+  </ul>
+
+  <p data-dc-tpl="118" style="margin: 0px 0px 1.35em;">That last point is the opening. If chunk 47 of your corpus gets retrieved a thousand times a day, computing its KV cache a thousand times is pure waste. Precompute it once, store it, load it on demand.</p>
+
+  <div data-dc-tpl="119" style="background: var(--tip-bg); border-left: 3px solid var(--tip-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="120" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Key idea</strong>
+    Precomputing chunk caches is a storage-for-compute trade. The trade is only worth it if the reconstructed cache behaves like a cache the model would have built itself. That equivalence is exactly what breaks, and the rest of this post is about repairing it cheaply.
+  </div>
+
+  <h2 data-dc-tpl="121" id="two-failures" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">2. Two failures, not one</h2>
+
+  <p data-dc-tpl="122" style="margin: 0px 0px 1.35em;">Here is the part that took me a second read to appreciate. Concatenating independently encoded chunk caches produces two distinct defects with two distinct causes. Most prior work fixes one and leaves the other standing.</p>
+
+  <ol data-dc-tpl="123" style="display: flex; flex-direction: column; gap: 0.65rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="124"><strong data-dc-tpl="125" style="color: var(--heading);">Repeated attention sinks.</strong> Transformers dump disproportionate attention mass on the first few tokens of a sequence, a well documented effect.<sup data-dc-tpl="126"><a data-dc-tpl="127" href="#ref-4" style="color: var(--accent); font-size: 0.72em;">[4]</a></sup> Encode each chunk on its own and each chunk grows its own sink. Concatenate eight chunks and you have eight sinks in a sequence that should have one. The resulting attention distribution looks nothing like what the model saw during training.</li>
+    <li data-dc-tpl="128"><strong data-dc-tpl="129" style="color: var(--heading);">Missing inter-chunk attention.</strong> When chunk 3 was encoded, chunk 1 did not exist. No key or value in chunk 3 was ever influenced by chunk 1. The query tokens can still attend across everything at generation time, but that is a single shallow pass. It does not reconstruct the rich cross-document dependencies that full attention builds layer by layer.</li>
+  </ol>
+
+  <p data-dc-tpl="130" style="margin: 0px 0px 1.35em;">These are orthogonal. One is a distributional problem in the first few positions. The other is a missing-information problem across the entire sequence. CacheClip's contribution is that it maps a separate, cheap mechanism onto each.</p>
+
+  <figure data-dc-tpl="131" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="132" viewBox="0 0 900 490" width="100%" role="img" aria-label="Independently cached chunks cause two failures: repeated attention sinks, fixed by a shared prefix; and missing cross-chunk attention, fixed by selective recomputation.">
+      <g data-dc-tpl="133" filter="url(#rough)" fill="none" stroke-width="1.6">
+        <rect data-dc-tpl="134" x="250" y="16" width="400" height="44" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="135" d="M420 62 C 380 76, 300 84, 240 98" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="136" d="M480 62 C 520 76, 600 84, 660 98" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="137" x="40" y="104" width="390" height="34" rx="5" stroke="#b8433a" fill="#fdece9"></rect>
+        <rect data-dc-tpl="138" x="470" y="104" width="390" height="34" rx="5" stroke="#b8433a" fill="#fdece9"></rect>
+        <rect data-dc-tpl="139" x="52" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="140" x="52" y="162" width="16" height="30" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="141" x="180" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="142" x="180" y="162" width="16" height="30" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="143" x="308" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="144" x="308" y="162" width="16" height="30" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="145" x="482" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="146" x="610" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <rect data-dc-tpl="147" x="738" y="162" width="112" height="30" rx="4" stroke="#2b2f36" fill="#fff" stroke-width="1.3"></rect>
+        <path data-dc-tpl="148" d="M538 158 C 560 132, 626 132, 648 158" stroke="#9aa3ad" stroke-dasharray="4 4" stroke-width="1.3"></path>
+        <path data-dc-tpl="149" d="M666 158 C 688 132, 754 132, 776 158" stroke="#9aa3ad" stroke-dasharray="4 4" stroke-width="1.3"></path>
+        <path data-dc-tpl="150" d="M587 137 L 599 149 M 599 137 L 587 149" stroke="#b8433a" stroke-width="1.6"></path>
+        <path data-dc-tpl="151" d="M715 137 L 727 149 M 727 137 L 715 149" stroke="#b8433a" stroke-width="1.6"></path>
+        <path data-dc-tpl="152" d="M235 246 L 235 288" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="153" d="M665 246 L 665 288" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="154" x="40" y="292" width="390" height="94" rx="6" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="155" x="470" y="292" width="390" height="94" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <path data-dc-tpl="156" d="M235 390 C 260 408, 340 418, 400 424" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="157" d="M665 390 C 640 408, 560 418, 500 424" stroke="#2b2f36" stroke-width="1.4" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="158" x="330" y="426" width="240" height="42" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+      </g>
+      <g data-dc-tpl="159" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="160" x="450" y="43" font-size="13" text-anchor="middle">chunks encoded in isolation, then concatenated</text>
+        <text data-dc-tpl="161" x="235" y="126" font-size="12.5" text-anchor="middle" fill="#b8433a">FAILURE A · repeated attention sinks</text>
+        <text data-dc-tpl="162" x="665" y="126" font-size="12.5" text-anchor="middle" fill="#b8433a">FAILURE B · missing cross-chunk attention</text>
+        <text data-dc-tpl="163" x="60" y="182" font-size="10.5" fill="#fff">■</text>
+        <text data-dc-tpl="164" x="120" y="182" font-size="11" text-anchor="middle">C1</text>
+        <text data-dc-tpl="165" x="248" y="182" font-size="11" text-anchor="middle">C2</text>
+        <text data-dc-tpl="166" x="376" y="182" font-size="11" text-anchor="middle">C3</text>
+        <text data-dc-tpl="167" x="538" y="182" font-size="11" text-anchor="middle">C1</text>
+        <text data-dc-tpl="168" x="666" y="182" font-size="11" text-anchor="middle">C2</text>
+        <text data-dc-tpl="169" x="794" y="182" font-size="11" text-anchor="middle">C3</text>
+        <text data-dc-tpl="170" x="52" y="216" font-size="11.5" fill="#6b7280">three chunks, three sinks. The model expects one.</text>
+        <text data-dc-tpl="171" x="52" y="234" font-size="11.5" fill="#6b7280">Attention mass lands where training never put it.</text>
+        <text data-dc-tpl="172" x="482" y="216" font-size="11.5" fill="#6b7280">no key or value in C2 was ever influenced by C1.</text>
+        <text data-dc-tpl="173" x="482" y="234" font-size="11.5" fill="#6b7280">Multi-hop questions have nothing to hop across.</text>
+        <text data-dc-tpl="174" x="56" y="316" font-size="12" fill="#2f6fb3">MECHANISM · shared prefix + position IDs</text>
+        <text data-dc-tpl="175" x="56" y="338" font-size="11.5">1. prepend the same prefix to every chunk offline</text>
+        <text data-dc-tpl="176" x="56" y="356" font-size="11.5">2. at concat time keep only the first copy of it</text>
+        <text data-dc-tpl="177" x="56" y="374" font-size="11.5">3. renumber positions into one increasing range</text>
+        <text data-dc-tpl="178" x="486" y="316" font-size="12" fill="#b8433a">MECHANISM · selective recomputation</text>
+        <text data-dc-tpl="179" x="486" y="338" font-size="11.5">1. aux LLM scores chunk tokens against the query</text>
+        <text data-dc-tpl="180" x="486" y="356" font-size="11.5">2. top-k tokens grouped into contiguous windows</text>
+        <text data-dc-tpl="181" x="486" y="374" font-size="11.5">3. primary LLM recomputes only those, in context</text>
+        <text data-dc-tpl="182" x="450" y="452" font-size="13.5" text-anchor="middle">CacheClip = both, at once</text>
+        <text data-dc-tpl="183" x="450" y="484" font-size="11" text-anchor="middle" fill="#2e7d4f">the ablations confirm the split: each mechanism dominates a different benchmark</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="184" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 2: Two independent defects, two independent repairs. Black blocks on the left mark the first tokens of each chunk, where the sink forms. Crossed dashed arcs on the right mark attention paths that were never computed. Reading this figure is the fastest way to understand why calibration alone or recomputation alone is not enough.</figcaption>
+  </figure>
+
+  <h2 data-dc-tpl="185" id="reuse-landscape" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">3. The reuse landscape</h2>
+
+  <p data-dc-tpl="186" style="margin: 0px 0px 1.35em;">Four families of approach exist. Each one accepts a different loss.</p>
+
+  <figure data-dc-tpl="187" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="188" viewBox="0 0 900 330" width="100%" role="img" aria-label="Four KV cache reuse strategies compared: prefix caching, direct concatenation, calibration, and selective recomputation.">
+      <g data-dc-tpl="189" filter="url(#rough)" fill="none" stroke-width="1.4">
+        <rect data-dc-tpl="190" x="20" y="46" width="200" height="112" rx="6" stroke="#e5e7eb" fill="#fff"></rect>
+        <rect data-dc-tpl="191" x="238" y="46" width="200" height="112" rx="6" stroke="#e5e7eb" fill="#fff"></rect>
+        <rect data-dc-tpl="192" x="456" y="46" width="200" height="112" rx="6" stroke="#e5e7eb" fill="#fff"></rect>
+        <rect data-dc-tpl="193" x="674" y="46" width="200" height="112" rx="6" stroke="#e5e7eb" fill="#fff"></rect>
+        <rect data-dc-tpl="194" x="36" y="66" width="52" height="24" rx="3" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="195" x="92" y="66" width="52" height="24" rx="3" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="196" x="148" y="66" width="52" height="24" rx="3" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="197" x="36" y="102" width="52" height="24" rx="3" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="198" x="92" y="102" width="52" height="24" rx="3" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="199" x="148" y="102" width="52" height="24" rx="3" stroke="#b8433a" fill="#fdece9"></rect>
+        <path data-dc-tpl="200" d="M36 136 L 144 136" stroke="#2f6fb3" stroke-dasharray="4 3"></path>
+        <rect data-dc-tpl="201" x="252" y="96" width="174" height="26" rx="3" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="202" x="252" y="96" width="12" height="26" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="203" x="310" y="96" width="12" height="26" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="204" x="368" y="96" width="12" height="26" fill="#2b2f36" stroke="none"></rect>
+        <path data-dc-tpl="205" d="M310 96 L 310 122 M 368 96 L 368 122" stroke="#9aa3ad"></path>
+        <path data-dc-tpl="206" d="M282 92 C 296 74, 326 74, 340 92" stroke="#9aa3ad" stroke-dasharray="4 3"></path>
+        <path data-dc-tpl="207" d="M340 92 C 354 74, 384 74, 398 92" stroke="#9aa3ad" stroke-dasharray="4 3"></path>
+        <path data-dc-tpl="208" d="M305 74 L 315 84 M 315 74 L 305 84" stroke="#b8433a" stroke-width="1.5"></path>
+        <path data-dc-tpl="209" d="M363 74 L 373 84 M 373 74 L 363 84" stroke="#b8433a" stroke-width="1.5"></path>
+        <rect data-dc-tpl="210" x="470" y="96" width="174" height="26" rx="3" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="211" x="470" y="96" width="12" height="26" fill="#2b2f36" stroke="none"></rect>
+        <path data-dc-tpl="212" d="M528 96 L 528 122 M 586 96 L 586 122" stroke="#9aa3ad"></path>
+        <path data-dc-tpl="213" d="M500 92 C 514 74, 544 74, 558 92" stroke="#9aa3ad" stroke-dasharray="4 3"></path>
+        <path data-dc-tpl="214" d="M558 92 C 572 74, 602 74, 616 92" stroke="#9aa3ad" stroke-dasharray="4 3"></path>
+        <path data-dc-tpl="215" d="M523 74 L 533 84 M 533 74 L 523 84" stroke="#b8433a" stroke-width="1.5"></path>
+        <path data-dc-tpl="216" d="M581 74 L 591 84 M 591 74 L 581 84" stroke="#b8433a" stroke-width="1.5"></path>
+        <rect data-dc-tpl="217" x="688" y="96" width="174" height="26" rx="3" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="218" x="688" y="96" width="12" height="26" fill="#2b2f36" stroke="none"></rect>
+        <rect data-dc-tpl="219" x="722" y="96" width="24" height="26" fill="#fdece9" stroke="#b8433a" stroke-width="1.2"></rect>
+        <rect data-dc-tpl="220" x="786" y="96" width="24" height="26" fill="#fdece9" stroke="#b8433a" stroke-width="1.2"></rect>
+        <path data-dc-tpl="221" d="M746 96 L 746 122 M 804 96 L 804 122" stroke="#9aa3ad"></path>
+        <path data-dc-tpl="222" d="M718 92 C 732 72, 762 72, 776 92" stroke="#2e7d4f" stroke-width="1.5" marker-end="url(#ahg)"></path>
+        <path data-dc-tpl="223" d="M776 92 C 790 72, 820 72, 834 92" stroke="#2e7d4f" stroke-width="1.5" marker-end="url(#ahg)"></path>
+      </g>
+      <g data-dc-tpl="224" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="225" x="20" y="30" font-size="12" font-weight="700">PREFIX CACHING</text>
+        <text data-dc-tpl="226" x="238" y="30" font-size="12" font-weight="700">DIRECT CONCAT</text>
+        <text data-dc-tpl="227" x="456" y="30" font-size="12" font-weight="700">CALIBRATION</text>
+        <text data-dc-tpl="228" x="674" y="30" font-size="12" font-weight="700">SELECTIVE RECOMPUTE</text>
+        <text data-dc-tpl="229" x="62" y="82" font-size="10.5" text-anchor="middle">D1</text>
+        <text data-dc-tpl="230" x="118" y="82" font-size="10.5" text-anchor="middle">D2</text>
+        <text data-dc-tpl="231" x="174" y="82" font-size="10.5" text-anchor="middle">D3</text>
+        <text data-dc-tpl="232" x="62" y="118" font-size="10.5" text-anchor="middle">D1</text>
+        <text data-dc-tpl="233" x="118" y="118" font-size="10.5" text-anchor="middle">D2</text>
+        <text data-dc-tpl="234" x="174" y="118" font-size="10.5" text-anchor="middle" fill="#b8433a">D5</text>
+        <text data-dc-tpl="235" x="36" y="152" font-size="10" fill="#2f6fb3">reuse stops at the first difference</text>
+        <text data-dc-tpl="236" x="252" y="142" font-size="10" fill="#6b7280">3 chunks → 3 sinks, no cross arcs</text>
+        <text data-dc-tpl="237" x="470" y="142" font-size="10" fill="#6b7280">1 sink, still no cross arcs</text>
+        <text data-dc-tpl="238" x="688" y="142" font-size="10" fill="#6b7280">1 sink, cross paths restored</text>
+        <text data-dc-tpl="239" x="20" y="186" font-size="11.5" fill="#2e7d4f">Needs an identical prefix.</text>
+        <text data-dc-tpl="240" x="20" y="204" font-size="11.5" fill="#2e7d4f">In RAG the retrieved set and</text>
+        <text data-dc-tpl="241" x="20" y="222" font-size="11.5" fill="#2e7d4f">its order change every query,</text>
+        <text data-dc-tpl="242" x="20" y="240" font-size="11.5" fill="#2e7d4f">so reuse collapses to the</text>
+        <text data-dc-tpl="243" x="20" y="258" font-size="11.5" fill="#2e7d4f">first chunk or two.</text>
+        <text data-dc-tpl="244" x="238" y="186" font-size="11.5" fill="#2e7d4f">Fastest possible option.</text>
+        <text data-dc-tpl="245" x="238" y="204" font-size="11.5" fill="#2e7d4f">Pays for it with both</text>
+        <text data-dc-tpl="246" x="238" y="222" font-size="11.5" fill="#2e7d4f">failures at once: repeated</text>
+        <text data-dc-tpl="247" x="238" y="240" font-size="11.5" fill="#2e7d4f">sinks and zero cross-chunk</text>
+        <text data-dc-tpl="248" x="238" y="258" font-size="11.5" fill="#2e7d4f">attention.</text>
+        <text data-dc-tpl="249" x="456" y="186" font-size="11.5" fill="#2e7d4f">Shared prefix, keep one</text>
+        <text data-dc-tpl="250" x="456" y="204" font-size="11.5" fill="#2e7d4f">copy. Fixes the sinks and</text>
+        <text data-dc-tpl="251" x="456" y="222" font-size="11.5" fill="#2e7d4f">costs almost nothing.</text>
+        <text data-dc-tpl="252" x="456" y="240" font-size="11.5" fill="#2e7d4f">Cannot recover information</text>
+        <text data-dc-tpl="253" x="456" y="258" font-size="11.5" fill="#2e7d4f">that was never computed.</text>
+        <text data-dc-tpl="254" x="674" y="186" font-size="11.5" fill="#2e7d4f">Recompute a small subset in</text>
+        <text data-dc-tpl="255" x="674" y="204" font-size="11.5" fill="#2e7d4f">full context. Restores real</text>
+        <text data-dc-tpl="256" x="674" y="222" font-size="11.5" fill="#2e7d4f">cross-chunk paths.</text>
+        <text data-dc-tpl="257" x="674" y="240" font-size="11.5" fill="#2e7d4f">Only as good as the tokens</text>
+        <text data-dc-tpl="258" x="674" y="258" font-size="11.5" fill="#2e7d4f">you choose. That is the game.</text>
+        <text data-dc-tpl="259" x="20" y="300" font-size="11" fill="#6b7280">black block = attention sink · dashed arc with × = attention path that does not exist · green arc = path restored by recomputation</text>
+        <text data-dc-tpl="260" x="20" y="318" font-size="11" fill="#6b7280">red cell = token recomputed in full context · blue cell = cache entry reused as-is</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="261" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 3: The four reuse strategies drawn with a shared visual vocabulary. Reading left to right, each panel keeps more of full attention's behavior and costs more to run. CacheClip lives in the fourth panel and its entire contribution is choosing which cells go red.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="262" style="margin: 0px 0px 1.35em;">A little more detail on each, since the trade-offs matter when you are picking one for a real deployment.</p>
+
+  <ul data-dc-tpl="263" style="display: flex; flex-direction: column; gap: 0.7rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="264"><strong data-dc-tpl="265" style="color: var(--heading);">Prefix caching</strong> (vLLM<sup data-dc-tpl="266"><a data-dc-tpl="267" href="#ref-7" style="color: var(--accent); font-size: 0.72em;">[7]</a></sup>, SGLang<sup data-dc-tpl="268"><a data-dc-tpl="269" href="#ref-8" style="color: var(--accent); font-size: 0.72em;">[8]</a></sup>, RAGCache<sup data-dc-tpl="270"><a data-dc-tpl="271" href="#ref-6" style="color: var(--accent); font-size: 0.72em;">[6]</a></sup>). Reuses the cache when a new request shares a literal prefix with an old one. If the last request used <code data-dc-tpl="272" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[D1, D2, D3]</code> and this one uses <code data-dc-tpl="273" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[D1, D2, D5]</code>, you reuse <code data-dc-tpl="274" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[D1, D2]</code> and recompute everything after. Correct by construction, but the reuse condition is brutal in RAG: reorder the retrieved set and reuse evaporates. Caching the same chunk at multiple positions means storing multiple versions of it.</li>
+    <li data-dc-tpl="275"><strong data-dc-tpl="276" style="color: var(--heading);">Direct concatenation</strong> (PromptCache<sup data-dc-tpl="277"><a data-dc-tpl="278" href="#ref-5" style="color: var(--accent); font-size: 0.72em;">[5]</a></sup>). Precompute each chunk independently, glue the caches, fix up positional embeddings. Enormous speedup, both quality failures intact.</li>
+    <li data-dc-tpl="279"><strong data-dc-tpl="280" style="color: var(--heading);">Calibration</strong> (APE<sup data-dc-tpl="281"><a data-dc-tpl="282" href="#ref-3" style="color: var(--accent); font-size: 0.72em;">[3]</a></sup>, Zhang et al.<sup data-dc-tpl="283"><a data-dc-tpl="284" href="#ref-12" style="color: var(--accent); font-size: 0.72em;">[12]</a></sup>). Prepend a shared prefix to every chunk at encode time, keep only the first copy at concat time. Removes the duplicate sinks. APE also rescales attention temperature to sharpen focus. Cheap and effective for failure A, useless for failure B.</li>
+    <li data-dc-tpl="285"><strong data-dc-tpl="286" style="color: var(--heading);">Selective recomputation</strong> (CacheBlend<sup data-dc-tpl="287"><a data-dc-tpl="288" href="#ref-2" style="color: var(--accent); font-size: 0.72em;">[2]</a></sup>, Cache-Craft<sup data-dc-tpl="289"><a data-dc-tpl="290" href="#ref-13" style="color: var(--accent); font-size: 0.72em;">[13]</a></sup>). Pick a subset of tokens, recompute their KV entries with the full concatenated context visible, overwrite. This genuinely restores cross-chunk paths. It is the right family, and everything now depends on the selection rule.</li>
+    <li data-dc-tpl="291"><strong data-dc-tpl="292" style="color: var(--heading);">Finetuning</strong> (Block-Attention<sup data-dc-tpl="293"><a data-dc-tpl="294" href="#ref-9" style="color: var(--accent); font-size: 0.72em;">[9]</a></sup>, TurboRAG<sup data-dc-tpl="295"><a data-dc-tpl="296" href="#ref-10" style="color: var(--accent); font-size: 0.72em;">[10]</a></sup>, KVLink<sup data-dc-tpl="297"><a data-dc-tpl="298" href="#ref-11" style="color: var(--accent); font-size: 0.72em;">[11]</a></sup>). Teach the model to work with block-diagonal attention. Works well, but you are now retraining a 14B model, curating datasets that balance chunk configurations, and repeating the whole exercise whenever the base model changes.</li>
+  </ul>
+
+  <h2 data-dc-tpl="299" id="token-selection" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">4. Why token selection is the hard part</h2>
+
+  <p data-dc-tpl="300" style="margin: 0px 0px 1.35em;">Selective recomputation only works because attention is sparse. That part is settled.</p>
+
+  <ul data-dc-tpl="301" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="302">The top 10 to 20% of tokens carry the majority of attention weight.<sup data-dc-tpl="303"><a data-dc-tpl="304" href="#ref-14" style="color: var(--accent); font-size: 0.72em;">[14]</a></sup><sup data-dc-tpl="305"><a data-dc-tpl="306" href="#ref-15" style="color: var(--accent); font-size: 0.72em;">[15]</a></sup></li>
+    <li data-dc-tpl="307">This holds across model scales and task types.</li>
+    <li data-dc-tpl="308">So if you can find those tokens, recomputing them recovers most of the value of full attention.</li>
+    <li data-dc-tpl="309">But sparsity patterns are <strong data-dc-tpl="310" style="color: var(--heading);">query-dependent</strong>. Which tokens matter changes with the question being asked, so you cannot pick them offline.</li>
+  </ul>
+
+  <p data-dc-tpl="311" style="margin: 0px 0px 1.35em;">Which puts you in an awkward position at prefill time.</p>
+
+  <div data-dc-tpl="312" style="background: var(--note-bg); border-left: 3px solid var(--note-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="313" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Note: prefill is not decode</strong>
+    During decode you already hold a full KV cache and can compute exact attention scores. Methods like H2O<sup data-dc-tpl="314"><a data-dc-tpl="315" href="#ref-14" style="color: var(--accent); font-size: 0.72em;">[14]</a></sup>, SnapKV<sup data-dc-tpl="316"><a data-dc-tpl="317" href="#ref-15" style="color: var(--accent); font-size: 0.72em;">[15]</a></sup>, Quest<sup data-dc-tpl="318"><a data-dc-tpl="319" href="#ref-22" style="color: var(--accent); font-size: 0.72em;">[22]</a></sup> and PyramidKV<sup data-dc-tpl="320"><a data-dc-tpl="321" href="#ref-23" style="color: var(--accent); font-size: 0.72em;">[23]</a></sup> all assume that. In a cache-reuse prefill you hold only local per-chunk caches, so exact scores over the concatenated context do not exist yet. The selector has to be query-aware and cheap and blind to full-context attention, all at once.
+  </div>
+
+  <p data-dc-tpl="322" style="margin: 0px 0px 1.35em;">CacheBlend's answer was to use the primary model's own early layers: fully recompute layer 1, partially recompute layer 2, compare the resulting value matrix against the precomputed one, and treat the largest deviations as the tokens that matter.</p>
+
+  <p data-dc-tpl="323" style="margin: 0px 0px 0.75em;">The paper argues this is the wrong signal, for a reason that is well established in the interpretability literature.<sup data-dc-tpl="324"><a data-dc-tpl="325" href="#ref-1" style="color: var(--accent); font-size: 0.72em;">[1]</a></sup></p>
+
+  <ul data-dc-tpl="326" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="327">Shallow transformer layers mostly capture local syntax.</li>
+    <li data-dc-tpl="328">Deep layers carry long-range semantic dependencies and task-oriented reasoning.</li>
+    <li data-dc-tpl="329">Cross-chunk dependencies are exactly the long-range kind, so they live in deep layers.</li>
+    <li data-dc-tpl="330">Therefore the tokens that light up in layer 1 are systematically not the tokens that matter in layer 40.</li>
+  </ul>
+
+  <p data-dc-tpl="331" style="margin: 0px 0px 1.35em;">This is a bias, not noise. You cannot fix it by increasing the recomputation budget, and the results section shows what that looks like in practice: CacheBlend's RULER average actually gets <em data-dc-tpl="332">worse</em> as you recompute more, down to 52.93 at 30% from 77.43 at 10%.</p>
+
+  <h2 data-dc-tpl="333" id="small-models" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">5. Small models know what big models look at</h2>
+
+  <p data-dc-tpl="334" style="margin: 0px 0px 1.35em;">The paper's key empirical claim, and the thing the whole design rests on: a tiny model's <em data-dc-tpl="335">last</em> layer predicts a big model's last layer better than the big model's own <em data-dc-tpl="336">first</em> layer does.</p>
+
+  <p data-dc-tpl="337" style="margin: 0px 0px 0.75em;">The experiment:</p>
+
+  <ol data-dc-tpl="338" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="339">Four model pairs, one same-family and three cross-family with different architectures and different tokenizers.</li>
+    <li data-dc-tpl="340">200 samples from 2WikiMultihopQA<sup data-dc-tpl="341"><a data-dc-tpl="342" href="#ref-21" style="color: var(--accent); font-size: 0.72em;">[21]</a></sup> at each of 1K, 2K, 4K, 8K and 16K tokens.</li>
+    <li data-dc-tpl="343">Extract the head-averaged last-token attention distribution from the first and last layer of each model.</li>
+    <li data-dc-tpl="344">Project everything into a shared <strong data-dc-tpl="345" style="color: var(--heading);">character space</strong>, spreading each token's attention weight uniformly across the characters it covers. This is what makes cross-tokenizer comparison fair. SmolLM2 emits about 1050 tokens where Qwen2.5 emits 1024 for the same text.</li>
+    <li data-dc-tpl="346">Measure the Jaccard index of the top-20% highest-attention character positions.</li>
+  </ol>
+
+  <p data-dc-tpl="347" style="margin: 0px 0px 1.35em;">Jaccard on top-20% positions is the right metric here because it measures exactly the thing the system needs: do the two distributions agree on <em data-dc-tpl="348">where</em> the important positions are. It does not care whether the distributions have the same shape.</p>
+
+  
+  <div data-dc-tpl="350" style="overflow-x: auto; margin: 1.75rem 0px;">
+    <table data-dc-tpl="351" style="width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.55;">
+      <thead data-dc-tpl="352">
+        <tr data-dc-tpl="353">
+          <th data-dc-tpl="354" style="text-align: left; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700; white-space: nowrap;">Model pair</th>
+          <th data-dc-tpl="355" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">1K</th>
+          <th data-dc-tpl="356" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">2K</th>
+          <th data-dc-tpl="357" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">4K</th>
+          <th data-dc-tpl="358" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">8K</th>
+          <th data-dc-tpl="359" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">16K</th>
+        </tr>
+      </thead>
+      <tbody data-dc-tpl="360">
+        <tr data-dc-tpl="361"><td data-dc-tpl="362" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap;">A · Qwen0.5B → Qwen14B</td><td data-dc-tpl="363" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.41 / 0.23</td><td data-dc-tpl="364" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.41 / 0.22</td><td data-dc-tpl="365" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.39 / 0.22</td><td data-dc-tpl="366" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.39 / 0.22</td><td data-dc-tpl="367" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.39 / 0.22</td></tr>
+        <tr data-dc-tpl="368"><td data-dc-tpl="369" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap;">B · SmolLM → Qwen14B</td><td data-dc-tpl="370" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.30 / 0.23</td><td data-dc-tpl="371" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.29 / 0.22</td><td data-dc-tpl="372" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.29 / 0.22</td><td data-dc-tpl="373" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.28 / 0.22</td><td data-dc-tpl="374" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.31 / 0.22</td></tr>
+        <tr data-dc-tpl="375"><td data-dc-tpl="376" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap;">C · SmolLM → LLaMA8B</td><td data-dc-tpl="377" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.31 / 0.13</td><td data-dc-tpl="378" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.31 / 0.13</td><td data-dc-tpl="379" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.29 / 0.12</td><td data-dc-tpl="380" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.28 / 0.12</td><td data-dc-tpl="381" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.28 / 0.11</td></tr>
+        <tr data-dc-tpl="382"><td data-dc-tpl="383" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); white-space: nowrap;">D · SmolLM → Ministral8B</td><td data-dc-tpl="384" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.32 / 0.19</td><td data-dc-tpl="385" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.32 / 0.17</td><td data-dc-tpl="386" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.31 / 0.17</td><td data-dc-tpl="387" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.29 / 0.16</td><td data-dc-tpl="388" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.34 / 0.16</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p data-dc-tpl="389" style="font-size: 13.5px; color: var(--muted); margin: -0.75rem 0px 1.75rem; line-height: 1.5;">Jaccard index of top-20% character positions. Each cell reads <em data-dc-tpl="390">aux last layer vs primary last layer</em> / <em data-dc-tpl="391">primary first layer vs primary last layer</em>. Higher is better on the left of each pair.</p>
+  
+
+  <p data-dc-tpl="392" style="margin: 0px 0px 0.75em;">What to take from it:</p>
+
+  <ul data-dc-tpl="393" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="394"><strong data-dc-tpl="395" style="color: var(--heading);">All 16 configurations go the same way.</strong> The auxiliary model's last layer beats the primary model's own first layer, every time.</li>
+    <li data-dc-tpl="396"><strong data-dc-tpl="397" style="color: var(--heading);">The margin is large on cross-family pairs.</strong> Pair C is 0.31 vs 0.13 at 1K. A 135M model from a different architecture family with a different tokenizer is more than twice as good a predictor of LLaMA-3.1-8B's last-layer focus as LLaMA's own layer 1.</li>
+    <li data-dc-tpl="398"><strong data-dc-tpl="399" style="color: var(--heading);">It holds as context grows.</strong> The numbers barely move from 1K to 16K.</li>
+    <li data-dc-tpl="400"><strong data-dc-tpl="401" style="color: var(--heading);">Same-family is better still.</strong> Pair A hits 0.41, and that shows up downstream: Qwen2.5-0.5B is the stronger auxiliary model in the end-to-end results.</li>
+  </ul>
+
+  <p data-dc-tpl="402" style="margin: 0px 0px 1.35em;">The paper also reports KL divergence as a secondary metric, and there the picture is mixed: alignment is clean when the primary model is the same (pairs A and B) and reverses for pairs C and D. The explanation is reasonable. Different architectures produce distributions with different peakiness, which inflates KL without moving the peaks. Since the system only needs positions, not shapes, Jaccard is the metric that decides.</p>
+
+  <div data-dc-tpl="403" style="background: var(--tip-bg); border-left: 3px solid var(--tip-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="404" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Key idea</strong>
+    Transformers of wildly different sizes and families converge on a similar notion of "which tokens are important" in their final layers. Depth in the network matters more than parameter count for this particular judgment. That is a genuinely interesting result independent of CacheClip, and it is what makes a 135M model a legitimate oracle for a 14B one.
+  </div>
+
+  <h2 data-dc-tpl="405" id="how-it-works" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">6. How CacheClip works</h2>
+
+  <p data-dc-tpl="406" style="margin: 0px 0px 1.35em;">Two phases. Offline you build caches. Online you assemble and patch them.</p>
+
+  <figure data-dc-tpl="407" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="408" viewBox="0 0 900 690" width="100%" role="img" aria-label="CacheClip workflow. Offline: prepend a shared prefix to every chunk and precompute KV caches in both the primary and auxiliary model. Online: the auxiliary model selects tokens on CPU while the GPU prepares the concatenated cache, then the primary model recomputes only the selected tokens.">
+      <g data-dc-tpl="409" filter="url(#rough)" fill="none" stroke-width="1.5">
+        <rect data-dc-tpl="410" x="20" y="30" width="860" height="196" rx="8" stroke="#9aa3ad" stroke-dasharray="7 5" stroke-width="1.2" fill="#fdfdfe"></rect>
+        <rect data-dc-tpl="411" x="40" y="66" width="180" height="44" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <rect data-dc-tpl="412" x="40" y="130" width="180" height="44" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="413" d="M220 88 C 236 88, 240 108, 252 116" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="414" d="M220 152 C 236 152, 240 132, 252 124" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="415" x="258" y="96" width="164" height="48" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="416" d="M422 112 C 438 112, 442 96, 456 92" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="417" d="M422 128 C 438 128, 442 148, 456 154" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="418" x="462" y="66" width="184" height="44" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <rect data-dc-tpl="419" x="462" y="130" width="184" height="44" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <path data-dc-tpl="420" d="M646 88 L 682 88" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="421" d="M646 152 L 682 152" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="422" x="688" y="66" width="172" height="44" rx="6" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="423" x="688" y="130" width="172" height="44" rx="6" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="424" x="20" y="256" width="860" height="412" rx="8" stroke="#9aa3ad" stroke-dasharray="7 5" stroke-width="1.2" fill="#fdfdfe"></rect>
+        <rect data-dc-tpl="425" x="40" y="298" width="160" height="42" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="426" d="M120 340 L 120 372" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="427" x="40" y="376" width="160" height="48" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="428" d="M200 394 C 216 386, 218 356, 232 348" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="429" d="M200 410 C 216 424, 218 478, 232 490" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="430" x="238" y="290" width="288" height="132" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <rect data-dc-tpl="431" x="238" y="452" width="288" height="116" rx="6" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <path data-dc-tpl="432" d="M526 344 L 558 344" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="433" x="564" y="320" width="212" height="48" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="434" d="M670 368 L 670 452" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="435" d="M526 510 L 558 510" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="436" x="564" y="452" width="296" height="126" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <rect data-dc-tpl="437" x="578" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="438" x="594" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="439" x="610" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="440" x="626" y="514" width="14" height="24" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="441" x="642" y="514" width="14" height="24" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="442" x="658" y="514" width="14" height="24" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="443" x="674" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="444" x="690" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="445" x="706" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="446" x="722" y="514" width="14" height="24" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="447" x="738" y="514" width="14" height="24" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="448" x="754" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="449" x="770" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="450" x="786" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="451" x="802" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <rect data-dc-tpl="452" x="818" y="514" width="14" height="24" fill="#f2f7fc" stroke="#2f6fb3" stroke-width="1"></rect>
+        <path data-dc-tpl="453" d="M712 578 L 712 606" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="454" x="600" y="610" width="224" height="42" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="455" d="M180 462 C 200 452, 216 436, 232 424" stroke="#2e7d4f" stroke-dasharray="5 4" stroke-width="1.2" marker-end="url(#ahg)"></path>
+      </g>
+      <g data-dc-tpl="456" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="457" x="34" y="22" font-size="11.5" fill="#6b7280" letter-spacing="1.2">OFFLINE · ONCE PER CHUNK</text>
+        <text data-dc-tpl="458" x="130" y="86" font-size="12" text-anchor="middle">shared prefix</text>
+        <text data-dc-tpl="459" x="130" y="101" font-size="10.5" text-anchor="middle" fill="#6b7280">(the system prompt)</text>
+        <text data-dc-tpl="460" x="130" y="150" font-size="12" text-anchor="middle">text chunks</text>
+        <text data-dc-tpl="461" x="130" y="165" font-size="10.5" text-anchor="middle" fill="#6b7280">C1 … Cn, 1000 tok, 50 overlap</text>
+        <text data-dc-tpl="462" x="340" y="118" font-size="11.5" text-anchor="middle">prepend prefix</text>
+        <text data-dc-tpl="463" x="340" y="133" font-size="11.5" text-anchor="middle">to every chunk</text>
+        <text data-dc-tpl="464" x="554" y="84" font-size="11.5" text-anchor="middle" fill="#b8433a">primary LLM</text>
+        <text data-dc-tpl="465" x="554" y="99" font-size="10.5" text-anchor="middle" fill="#6b7280">Qwen2.5-14B-Instruct</text>
+        <text data-dc-tpl="466" x="554" y="148" font-size="11.5" text-anchor="middle" fill="#b8433a">auxiliary LLM</text>
+        <text data-dc-tpl="467" x="554" y="163" font-size="10.5" text-anchor="middle" fill="#6b7280">SmolLM2-135M-Instruct</text>
+        <text data-dc-tpl="468" x="774" y="84" font-size="11.5" text-anchor="middle" fill="#2f6fb3">primary KV store</text>
+        <text data-dc-tpl="469" x="774" y="99" font-size="10" text-anchor="middle" fill="#6b7280">P+C1 · P+C2 · P+C3 …</text>
+        <text data-dc-tpl="470" x="774" y="148" font-size="11.5" text-anchor="middle" fill="#2f6fb3">auxiliary KV store</text>
+        <text data-dc-tpl="471" x="774" y="163" font-size="10" text-anchor="middle" fill="#6b7280">P+C1 · P+C2 · P+C3 …</text>
+        <text data-dc-tpl="472" x="688" y="204" font-size="11" fill="#2e7d4f">both stores are built once and shared across every request</text>
+        <text data-dc-tpl="473" x="34" y="248" font-size="11.5" fill="#6b7280" letter-spacing="1.2">ONLINE · PER USER QUERY</text>
+        <text data-dc-tpl="474" x="120" y="324" font-size="12" text-anchor="middle">user query</text>
+        <text data-dc-tpl="475" x="120" y="398" font-size="11.5" text-anchor="middle">RAG retrieval</text>
+        <text data-dc-tpl="476" x="120" y="413" font-size="10.5" text-anchor="middle" fill="#6b7280">→ chunk ids</text>
+        <text data-dc-tpl="477" x="252" y="312" font-size="12" fill="#b8433a">TOKEN SELECTION · runs on CPU</text>
+        <text data-dc-tpl="478" x="252" y="336" font-size="11">1. load precomputed aux KV caches</text>
+        <text data-dc-tpl="479" x="252" y="356" font-size="11">2. batch [chunk_i + query], read last-layer attn</text>
+        <text data-dc-tpl="480" x="252" y="376" font-size="11">3. average over query rows → one score per token</text>
+        <text data-dc-tpl="481" x="252" y="396" font-size="11">4. top-k, then sliding-window grouping</text>
+        <text data-dc-tpl="482" x="252" y="414" font-size="10.5" fill="#6b7280">Intel Xeon 6554S, AMX-accelerated</text>
+        <text data-dc-tpl="483" x="670" y="341" font-size="11.5" text-anchor="middle">tokenizer remap</text>
+        <text data-dc-tpl="484" x="670" y="356" font-size="10.5" text-anchor="middle" fill="#6b7280">aux ids → primary ids</text>
+        <text data-dc-tpl="485" x="252" y="474" font-size="12" fill="#2f6fb3">CACHE PREPARATION · GPU</text>
+        <text data-dc-tpl="486" x="252" y="498" font-size="11">1. concatenate retrieved chunk caches</text>
+        <text data-dc-tpl="487" x="252" y="518" font-size="11">2. drop every redundant prefix copy</text>
+        <text data-dc-tpl="488" x="252" y="538" font-size="11">3. rearrange position IDs into one range</text>
+        <text data-dc-tpl="489" x="252" y="558" font-size="10.5" fill="#6b7280">result: one sink, monotonic positions</text>
+        <text data-dc-tpl="490" x="578" y="474" font-size="12" fill="#b8433a">SELECTIVE RECOMPUTATION · GPU</text>
+        <text data-dc-tpl="491" x="578" y="496" font-size="11" fill="#6b7280">global KV cache, ~20% of entries overwritten</text>
+        <text data-dc-tpl="492" x="578" y="558" font-size="10.5" fill="#2f6fb3">■ reuse precomputed</text>
+        <text data-dc-tpl="493" x="730" y="558" font-size="10.5" fill="#b8433a">■ recompute in full context</text>
+        <text data-dc-tpl="494" x="712" y="636" font-size="12" text-anchor="middle">first token out</text>
+        <text data-dc-tpl="495" x="40" y="452" font-size="11" fill="#2e7d4f">selection overlaps with</text>
+        <text data-dc-tpl="496" x="40" y="466" font-size="11" fill="#2e7d4f">KV cache loading, so most</text>
+        <text data-dc-tpl="497" x="40" y="480" font-size="11" fill="#2e7d4f">of its latency is hidden</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="498" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 4: The full CacheClip pipeline, redrawn from Figure 4 of the paper. Red outlines are compute, blue outlines are memory. The two online branches run on different devices and overlap: the CPU is scoring tokens while the GPU is loading and stitching caches.</figcaption>
+  </figure>
+
+  <h3 data-dc-tpl="499" id="shared-prefix" style="font-size: clamp(18px, 2.2vw, 19.5px); line-height: 1.35; font-weight: 700; color: var(--heading); margin: 2.5rem 0px 0.9rem;">6.1 Shared prefix and position IDs</h3>
+
+  <p data-dc-tpl="500" style="margin: 0px 0px 0.75em;">This is the cheap half. It costs essentially nothing at request time.</p>
+
+  <ol data-dc-tpl="501" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="502"><strong data-dc-tpl="503" style="color: var(--heading);">Offline:</strong> prepend a fixed prefix to every chunk before encoding it. The default is the system prompt, which you were going to send anyway.</li>
+    <li data-dc-tpl="504"><strong data-dc-tpl="505" style="color: var(--heading);">Online:</strong> concatenate the retrieved caches and keep the prefix only from the first chunk. Every other copy is dropped.</li>
+    <li data-dc-tpl="506"><strong data-dc-tpl="507" style="color: var(--heading);">Result:</strong> the assembled sequence has exactly one attention sink, at position 0, which is what the model was trained on.</li>
+    <li data-dc-tpl="508"><strong data-dc-tpl="509" style="color: var(--heading);">Then fix the positions.</strong> Each chunk was encoded starting right after the prefix, so they all share the same position offsets. Dropping the duplicate prefixes leaves repeated position IDs. CacheClip renumbers so each chunk occupies a unique continuous range and the sequence is monotonic, matching full attention mode.</li>
+  </ol>
+
+  <div data-dc-tpl="510" style="background: var(--note-bg); border-left: 3px solid var(--note-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="511" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Note</strong>
+    This step is borrowed, not invented. APE<sup data-dc-tpl="512"><a data-dc-tpl="513" href="#ref-3" style="color: var(--accent); font-size: 0.72em;">[3]</a></sup> and Zhang et al.<sup data-dc-tpl="514"><a data-dc-tpl="515" href="#ref-12" style="color: var(--accent); font-size: 0.72em;">[12]</a></sup> introduced the shared-prefix trick. CacheClip's contribution is combining it with a much better recomputation strategy, and the ablation shows the two are complementary rather than redundant.
+  </div>
+
+  <h3 data-dc-tpl="516" id="aux-selection" style="font-size: clamp(18px, 2.2vw, 19.5px); line-height: 1.35; font-weight: 700; color: var(--heading); margin: 2.5rem 0px 0.9rem;">6.2 Auxiliary-model-guided token selection</h3>
+
+  <p data-dc-tpl="517" style="margin: 0px 0px 1.35em;">The expensive-sounding half, made cheap by the same caching trick applied twice.</p>
+
+  <figure data-dc-tpl="518" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="519" viewBox="0 0 900 440" width="100%" role="img" aria-label="Token selection pipeline: the auxiliary model produces a query-by-chunk attention matrix, columns are averaged into per-token importance scores, the top k are selected, and indices are remapped from the auxiliary tokenizer to the primary tokenizer.">
+      <g data-dc-tpl="520" filter="url(#rough)" fill="none" stroke-width="1.5">
+        <rect data-dc-tpl="521" x="20" y="52" width="150" height="56" rx="6" stroke="#2f6fb3" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="522" x="20" y="128" width="150" height="44" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="523" d="M170 80 C 182 80, 186 94, 196 98" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <path data-dc-tpl="524" d="M170 150 C 182 150, 186 118, 196 112" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="525" x="202" y="66" width="164" height="78" rx="6" stroke="#b8433a" fill="#fdf7f6"></rect>
+        <path data-dc-tpl="526" d="M366 104 L 396 104" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="527" x="404" y="52" width="180" height="112" rx="4" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="528" d="M494 168 L 494 204" stroke="#2e7d4f" stroke-dasharray="5 4" stroke-width="1.3" marker-end="url(#ahg)"></path>
+        <path data-dc-tpl="529" d="M404 212 L 584 212" stroke="#e5e7eb" stroke-width="1"></path>
+        <path data-dc-tpl="530" d="M404 288 L 584 288" stroke="#2b2f36" stroke-width="1.2"></path>
+        <path data-dc-tpl="531" d="M404 240 L 584 240" stroke="#b8433a" stroke-dasharray="4 3" stroke-width="1.1"></path>
+        <path data-dc-tpl="532" d="M584 258 L 618 258" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="533" x="626" y="232" width="252" height="52" rx="6" stroke="#b8433a" fill="#fdece9"></rect>
+        <path data-dc-tpl="534" d="M752 284 L 752 316" stroke="#2b2f36" stroke-width="1.3" marker-end="url(#ah)"></path>
+        <rect data-dc-tpl="535" x="626" y="320" width="252" height="52" rx="6" stroke="#2b2f36" fill="#fff"></rect>
+        <path data-dc-tpl="536" d="M636 392 L 868 392" stroke="#2f6fb3" stroke-width="1.2"></path>
+        <path data-dc-tpl="537" d="M636 410 L 868 410" stroke="#2b2f36" stroke-width="1.2"></path>
+        <path data-dc-tpl="538" d="M636 386 L 636 398 M 684 386 L 684 398 M 716 386 L 716 398 M 772 386 L 772 398 M 812 386 L 812 398 M 868 386 L 868 398" stroke="#2f6fb3" stroke-width="1.2"></path>
+        <path data-dc-tpl="539" d="M636 404 L 636 416 M 672 404 L 672 416 M 724 404 L 724 416 M 760 404 L 760 416 M 824 404 L 824 416 M 868 404 L 868 416" stroke="#2b2f36" stroke-width="1.2"></path>
+      </g>
+      <g data-dc-tpl="540" fill="#9aa3ad">
+        <rect data-dc-tpl="541" x="412" y="60" width="12" height="11"></rect><rect data-dc-tpl="542" x="440" y="60" width="12" height="11" fill="#4b5563"></rect><rect data-dc-tpl="543" x="468" y="60" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="544" x="496" y="60" width="12" height="11" fill="#2b2f36"></rect><rect data-dc-tpl="545" x="524" y="60" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="546" x="552" y="60" width="12" height="11" fill="#9aa3ad"></rect>
+        <rect data-dc-tpl="547" x="412" y="79" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="548" x="440" y="79" width="12" height="11" fill="#2b2f36"></rect><rect data-dc-tpl="549" x="468" y="79" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="550" x="496" y="79" width="12" height="11" fill="#4b5563"></rect><rect data-dc-tpl="551" x="524" y="79" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="552" x="552" y="79" width="12" height="11" fill="#d1d5db"></rect>
+        <rect data-dc-tpl="553" x="412" y="98" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="554" x="440" y="98" width="12" height="11" fill="#4b5563"></rect><rect data-dc-tpl="555" x="468" y="98" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="556" x="496" y="98" width="12" height="11" fill="#2b2f36"></rect><rect data-dc-tpl="557" x="524" y="98" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="558" x="552" y="98" width="12" height="11" fill="#9aa3ad"></rect>
+        <rect data-dc-tpl="559" x="412" y="117" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="560" x="440" y="117" width="12" height="11" fill="#2b2f36"></rect><rect data-dc-tpl="561" x="468" y="117" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="562" x="496" y="117" width="12" height="11" fill="#4b5563"></rect><rect data-dc-tpl="563" x="524" y="117" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="564" x="552" y="117" width="12" height="11" fill="#d1d5db"></rect>
+        <rect data-dc-tpl="565" x="412" y="136" width="12" height="11" fill="#e5e7eb"></rect><rect data-dc-tpl="566" x="440" y="136" width="12" height="11" fill="#4b5563"></rect><rect data-dc-tpl="567" x="468" y="136" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="568" x="496" y="136" width="12" height="11" fill="#2b2f36"></rect><rect data-dc-tpl="569" x="524" y="136" width="12" height="11" fill="#d1d5db"></rect><rect data-dc-tpl="570" x="552" y="136" width="12" height="11" fill="#e5e7eb"></rect>
+      </g>
+      <g data-dc-tpl="571">
+        <rect data-dc-tpl="572" x="410" y="266" width="16" height="22" fill="#e5e7eb"></rect>
+        <rect data-dc-tpl="573" x="438" y="252" width="16" height="36" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="574" x="466" y="276" width="16" height="12" fill="#e5e7eb"></rect>
+        <rect data-dc-tpl="575" x="494" y="228" width="16" height="60" fill="#fdece9" stroke="#b8433a" stroke-width="1"></rect>
+        <rect data-dc-tpl="576" x="522" y="272" width="16" height="16" fill="#e5e7eb"></rect>
+        <rect data-dc-tpl="577" x="550" y="262" width="16" height="26" fill="#e5e7eb"></rect>
+      </g>
+      <g data-dc-tpl="578" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="579" x="95" y="76" font-size="11.5" text-anchor="middle" fill="#2f6fb3">aux KV cache</text>
+        <text data-dc-tpl="580" x="95" y="92" font-size="10.5" text-anchor="middle" fill="#6b7280">prefix + chunk_i</text>
+        <text data-dc-tpl="581" x="95" y="155" font-size="11.5" text-anchor="middle">user query</text>
+        <text data-dc-tpl="582" x="284" y="98" font-size="11.5" text-anchor="middle" fill="#b8433a">auxiliary LLM</text>
+        <text data-dc-tpl="583" x="284" y="114" font-size="10.5" text-anchor="middle" fill="#6b7280">final layer only,</text>
+        <text data-dc-tpl="584" x="284" y="128" font-size="10.5" text-anchor="middle" fill="#6b7280">all chunks in one batch</text>
+        <text data-dc-tpl="585" x="404" y="42" font-size="11" fill="#6b7280">attention from query tokens to chunk tokens</text>
+        <text data-dc-tpl="586" x="404" y="180" font-size="10.5" fill="#6b7280">columns = chunk tokens (N)</text>
+        <text data-dc-tpl="587" x="594" y="112" font-size="10.5" fill="#6b7280">rows = query</text>
+        <text data-dc-tpl="588" x="594" y="126" font-size="10.5" fill="#6b7280">tokens (|Q|)</text>
+        <text data-dc-tpl="589" x="504" y="198" font-size="11" fill="#2e7d4f">average down each column</text>
+        <text data-dc-tpl="590" x="404" y="308" font-size="11" fill="#6b7280">one importance score per chunk token</text>
+        <text data-dc-tpl="591" x="590" y="236" font-size="10" fill="#b8433a">top-k cut</text>
+        <text data-dc-tpl="592" x="640" y="256" font-size="11.5" fill="#b8433a">selected indices</text>
+        <text data-dc-tpl="593" x="640" y="272" font-size="10.5" fill="#6b7280">k = recomp% × N, in the aux tokenizer</text>
+        <text data-dc-tpl="594" x="640" y="344" font-size="11.5">tokenizer remap</text>
+        <text data-dc-tpl="595" x="640" y="360" font-size="10.5" fill="#6b7280">aux token boundaries ≠ primary token boundaries</text>
+        <text data-dc-tpl="596" x="596" y="396" font-size="10" fill="#2f6fb3" text-anchor="end">aux</text>
+        <text data-dc-tpl="597" x="596" y="414" font-size="10" text-anchor="end">primary</text>
+        <text data-dc-tpl="598" x="626" y="434" font-size="11" fill="#2e7d4f">→ primary-side indices go to sliding-window grouping (Figure 6)</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="599" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 5: How a token gets selected. The auxiliary model only ever produces one thing the system cares about: a single importance score per chunk token. Everything upstream is about producing that vector cheaply, and everything downstream is about turning it into a safe set of indices for a different tokenizer.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="600" style="margin: 0px 0px 0.75em;">Step by step:</p>
+
+  <ol data-dc-tpl="601" style="display: flex; flex-direction: column; gap: 0.6rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="602"><strong data-dc-tpl="603" style="color: var(--heading);">Precompute the auxiliary caches too.</strong> Every chunk gets a KV cache in the auxiliary model, offline, exactly as it does in the primary model. This is what makes online selection cheap.</li>
+    <li data-dc-tpl="604"><strong data-dc-tpl="605" style="color: var(--heading);">Batch chunk-plus-query pairs.</strong> Online, build <code data-dc-tpl="606" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[chunk_1 + query]</code>, <code data-dc-tpl="607" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[chunk_2 + query]</code> and so on, and run them as one batch. Only the query tokens are actually computed. The chunk side is loaded from cache.</li>
+    <li data-dc-tpl="608"><strong data-dc-tpl="609" style="color: var(--heading);">Read the final layer.</strong> Take the attention matrix from the auxiliary model's last layer.</li>
+    <li data-dc-tpl="610"><strong data-dc-tpl="611" style="color: var(--heading);">Slice out what matters.</strong> Keep only attention from query tokens to chunk tokens. Attention among query tokens and attention to the shared prefix are discarded. What is left has shape <code data-dc-tpl="612" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[query_size, total_chunk_size]</code>.</li>
+    <li data-dc-tpl="613"><strong data-dc-tpl="614" style="color: var(--heading);">Collapse to a vector.</strong> Average over the query dimension to get one importance score per chunk token, shape <code data-dc-tpl="615" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">[total_chunk_size]</code>.</li>
+    <li data-dc-tpl="616"><strong data-dc-tpl="617" style="color: var(--heading);">Take the top k.</strong> Where k is set by the recomputation ratio you configured.</li>
+  </ol>
+
+  <p data-dc-tpl="618" style="margin: 0px 0px 1rem;">The scoring step is just a column mean over the query rows of the last-layer attention matrix:</p>
+
+  <pre data-dc-tpl="619" style="background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 1rem; overflow-x: auto; font-size: 14px; line-height: 1.6; margin: 0px 0px 1.75rem;"><code data-dc-tpl="620">score(j) = (1 / |Q|) * sum over i in Q of  A_last[i, j]
+
+  A_last   last-layer attention of the auxiliary model
+  Q        the query token positions (rows)
+  j        a chunk token position (column)
+  N        total_chunk_size, the number of columns
+  k        round(recomp_ratio * N)</code></pre>
+
+  <p data-dc-tpl="621" style="margin: 0px 0px 1.35em;">Plain language: for each token in the retrieved context, ask "on average, how hard did the query look at you." Sort. Keep the top slice.</p>
+
+  <h3 data-dc-tpl="622" id="grouping" style="font-size: clamp(18px, 2.2vw, 19.5px); line-height: 1.35; font-weight: 700; color: var(--heading); margin: 2.5rem 0px 0.9rem;">6.3 Sliding-window grouping</h3>
+
+  <p data-dc-tpl="623" style="margin: 0px 0px 1.35em;">This is the component I would have skipped if I were designing the system, and it turns out to be the single biggest contributor on RULER. It exists because recomputing scattered individual tokens actively damages the cache.</p>
+
+  <ul data-dc-tpl="624" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="625">Tokenizers split entities. A 7-digit number or a UUID is several tokens.</li>
+    <li data-dc-tpl="626">If you recompute token 3 of a 5-token UUID and leave the other four holding stale, locally-computed values, that entity's cache is now internally inconsistent.</li>
+    <li data-dc-tpl="627">The model reads a fragment that is half in-context and half out-of-context, and produces corrupted output.</li>
+    <li data-dc-tpl="628">Grouping forces recomputed tokens to arrive in contiguous runs, so entities stay whole.</li>
+  </ul>
+
+  <figure data-dc-tpl="629" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="630" viewBox="0 0 900 370" width="100%" role="img" aria-label="Sliding window grouping. A window of 8 tokens starting at a candidate is kept if it contains at least 5 candidates, and the whole window including non-candidates is recomputed. Sparse candidates are dropped.">
+      <g data-dc-tpl="631" filter="url(#rough)" fill="none" stroke-width="1.2">
+        <rect data-dc-tpl="632" x="60" y="86" width="780" height="32" rx="3" stroke="#9aa3ad" fill="#fff"></rect>
+        <path data-dc-tpl="633" d="M86 86 L 86 118 M 112 86 L 112 118 M 138 86 L 138 118 M 164 86 L 164 118 M 190 86 L 190 118 M 216 86 L 216 118 M 242 86 L 242 118 M 268 86 L 268 118 M 294 86 L 294 118 M 320 86 L 320 118 M 346 86 L 346 118 M 372 86 L 372 118 M 398 86 L 398 118 M 424 86 L 424 118 M 450 86 L 450 118 M 476 86 L 476 118 M 502 86 L 502 118 M 528 86 L 528 118 M 554 86 L 554 118 M 580 86 L 580 118 M 606 86 L 606 118 M 632 86 L 632 118 M 658 86 L 658 118 M 684 86 L 684 118 M 710 86 L 710 118 M 736 86 L 736 118 M 762 86 L 762 118 M 788 86 L 788 118 M 814 86 L 814 118" stroke="#e5e7eb" stroke-width="1"></path>
+        <path data-dc-tpl="634" d="M190 66 L 190 78 L 398 78 L 398 66" stroke="#2e7d4f" stroke-width="1.5"></path>
+        <path data-dc-tpl="635" d="M580 66 L 580 78 L 788 78 L 788 66" stroke="#b8433a" stroke-width="1.5" stroke-dasharray="4 3"></path>
+        <rect data-dc-tpl="636" x="60" y="212" width="780" height="32" rx="3" stroke="#9aa3ad" fill="#f2f7fc"></rect>
+        <rect data-dc-tpl="637" x="190" y="212" width="234" height="32" fill="#fdece9" stroke="#b8433a" stroke-width="1.4"></rect>
+        <path data-dc-tpl="638" d="M86 212 L 86 244 M 112 212 L 112 244 M 138 212 L 138 244 M 164 212 L 164 244 M 190 212 L 190 244 M 216 212 L 216 244 M 242 212 L 242 244 M 268 212 L 268 244 M 294 212 L 294 244 M 320 212 L 320 244 M 346 212 L 346 244 M 372 212 L 372 244 M 398 212 L 398 244 M 424 212 L 424 244 M 450 212 L 450 244 M 476 212 L 476 244 M 502 212 L 502 244 M 528 212 L 528 244 M 554 212 L 554 244 M 580 212 L 580 244 M 606 212 L 606 244 M 632 212 L 632 244 M 658 212 L 658 244 M 684 212 L 684 244 M 710 212 L 710 244 M 736 212 L 736 244 M 762 212 L 762 244 M 788 212 L 788 244 M 814 212 L 814 244" stroke="#cbd5e1" stroke-width="1"></path>
+        <path data-dc-tpl="639" d="M294 130 L 294 200" stroke="#2e7d4f" stroke-dasharray="5 4" stroke-width="1.2" marker-end="url(#ahg)"></path>
+        <path data-dc-tpl="640" d="M684 130 C 684 160, 700 176, 700 196" stroke="#b8433a" stroke-dasharray="5 4" stroke-width="1.2"></path>
+        <path data-dc-tpl="641" d="M694 198 L 706 210 M 706 198 L 694 210" stroke="#b8433a" stroke-width="1.5"></path>
+      </g>
+      <g data-dc-tpl="642">
+        <circle data-dc-tpl="643" cx="203" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="644" cx="229" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="645" cx="281" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="646" cx="307" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="647" cx="359" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="648" cx="385" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="649" cx="593" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="650" cx="723" cy="72" r="3.4" fill="#b8433a"></circle>
+        <circle data-dc-tpl="651" cx="749" cy="72" r="3.4" fill="#b8433a"></circle>
+      </g>
+      <g data-dc-tpl="652" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="653" x="60" y="32" font-size="12" font-weight="700">STEP 1 · candidates from the auxiliary model's top-k</text>
+        <text data-dc-tpl="654" x="60" y="50" font-size="11" fill="#6b7280">red dot = candidate token. Window size w = 8, density threshold τ = 5. A window is only evaluated if it starts on a candidate.</text>
+        <text data-dc-tpl="655" x="294" y="140" font-size="11" text-anchor="middle" fill="#2e7d4f">6 candidates in 8 ≥ τ</text>
+        <text data-dc-tpl="656" x="294" y="154" font-size="11" text-anchor="middle" fill="#2e7d4f">keep the whole window,</text>
+        <text data-dc-tpl="657" x="294" y="168" font-size="11" text-anchor="middle" fill="#2e7d4f">including the gaps</text>
+        <text data-dc-tpl="658" x="684" y="140" font-size="11" text-anchor="middle" fill="#b8433a">3 candidates in 8 &lt; τ</text>
+        <text data-dc-tpl="659" x="684" y="154" font-size="11" text-anchor="middle" fill="#b8433a">isolated, drop them</text>
+        <text data-dc-tpl="660" x="60" y="196" font-size="12" font-weight="700">STEP 2 · the recomputation set</text>
+        <text data-dc-tpl="661" x="60" y="268" font-size="11" fill="#2f6fb3">■ reuse precomputed KV</text>
+        <text data-dc-tpl="662" x="240" y="268" font-size="11" fill="#b8433a">■ recompute in full context, as one contiguous run</text>
+        <text data-dc-tpl="663" x="60" y="304" font-size="11.5" fill="#2e7d4f">This is why grouping matters more than it looks. A 7-digit number or a UUID is several tokens.</text>
+        <text data-dc-tpl="664" x="60" y="322" font-size="11.5" fill="#2e7d4f">Recompute part of one and the cache holds a half-updated entity, which produces corrupted output.</text>
+        <text data-dc-tpl="665" x="60" y="340" font-size="11.5" fill="#2e7d4f">Grouping trades a little precision for entity-level consistency, and RULER rewards it heavily.</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="666" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 6: Sliding-window grouping with the paper's defaults, w = 8 and τ = 5. The dense cluster on the left passes the density test and is promoted wholesale, gaps included. The sparse candidates on the right fail it and are discarded rather than recomputed in isolation.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="667" style="margin: 0px 0px 0.75em;">The rule, precisely:</p>
+
+  <ol data-dc-tpl="668" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="669">Scan the sequence with a window of size <code data-dc-tpl="670" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">w</code> (default 8) and step 1.</li>
+    <li data-dc-tpl="671">Only evaluate a window whose <em data-dc-tpl="672">first</em> position is a candidate.</li>
+    <li data-dc-tpl="673">Count candidates inside the window. That is the local density.</li>
+    <li data-dc-tpl="674">If the count meets or exceeds <code data-dc-tpl="675" style="background: var(--surface); border-radius: 2px; padding: 0.1em 0.32em; font-size: 0.92em;">τ</code> (default 5), add <em data-dc-tpl="676">every</em> token in the window to the recomputation set, including the non-candidates.</li>
+    <li data-dc-tpl="677">Candidates never covered by a passing window are treated as isolated and dropped entirely.</li>
+  </ol>
+
+  <p data-dc-tpl="678" style="margin: 0px 0px 1.35em;">Point 5 is the counterintuitive one. The system throws away tokens the auxiliary model said were important, on the grounds that recomputing them alone would do more harm than good.</p>
+
+  
+  <pre data-dc-tpl="680" style="background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 1rem; overflow-x: auto; font-size: 14px; line-height: 1.6; margin: 0px 0px 1.75rem;"><code data-dc-tpl="681">candidates = top_k(scores, k = recomp_ratio * N)
+recompute  = empty set
+
+for t in range(N - w + 1):
+    if t not in candidates:
+        continue                        # window must start on a candidate
+    window  = range(t, t + w)
+    density = count(j in window if j in candidates)
+    if density &gt;= tau:
+        recompute |= window             # gaps included, entity stays whole
+
+# candidates never covered by a passing window are dropped
+
+primary_idx = remap_tokenizer(recompute, aux_tok, primary_tok)
+primary_llm.recompute(primary_idx, position_ids = full_attention_positions)
+global_kv.overwrite(primary_idx)</code></pre>
+  
+
+  <p data-dc-tpl="682" style="margin: 0px 0px 1.35em;">Two details in that last block are easy to miss. The indices have to be remapped between tokenizers, because the auxiliary and primary models generally do not agree on token boundaries. And the recomputation uses position IDs consistent with full attention mode, not the chunk-local ones the cache was built with. Otherwise you would be patching in entries that disagree with their neighbours about where they are in the sequence.</p>
+
+  <h3 data-dc-tpl="683" id="cpu-gpu" style="font-size: clamp(18px, 2.2vw, 19.5px); line-height: 1.35; font-weight: 700; color: var(--heading); margin: 2.5rem 0px 0.9rem;">6.4 The CPU/GPU split</h3>
+
+  <p data-dc-tpl="684" style="margin: 0px 0px 1.35em;">Adding a second model to an inference path usually means adding GPU memory pressure and contention. CacheClip sidesteps that by putting the auxiliary model somewhere the primary model is not.</p>
+
+  <ul data-dc-tpl="685" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="686"><strong data-dc-tpl="687" style="color: var(--heading);">The auxiliary model runs on the head node's CPU.</strong> Those cores are typically idle while the GPU does prefill.</li>
+    <li data-dc-tpl="688"><strong data-dc-tpl="689" style="color: var(--heading);">No extra GPU memory, no extra GPU compute.</strong> Which also means no workload imbalance across cards in a multi-GPU deployment.</li>
+    <li data-dc-tpl="690"><strong data-dc-tpl="691" style="color: var(--heading);">The FLOP count is small.</strong> With chunk-side KV caches precomputed, selection only processes the query tokens.</li>
+    <li data-dc-tpl="692"><strong data-dc-tpl="693" style="color: var(--heading);">AMX helps.</strong> The paper runs on 5th-gen Intel Xeon 6554S and notes that AMX<sup data-dc-tpl="694"><a data-dc-tpl="695" href="#ref-20" style="color: var(--accent); font-size: 0.72em;">[20]</a></sup> accelerates the matrix ops involved.<sup data-dc-tpl="696"><a data-dc-tpl="697" href="#ref-19" style="color: var(--accent); font-size: 0.72em;">[19]</a></sup></li>
+    <li data-dc-tpl="698"><strong data-dc-tpl="699" style="color: var(--heading);">It overlaps.</strong> Token selection runs concurrently with the GPU loading the primary KV caches, hiding most of its 0.238 s.</li>
+    <li data-dc-tpl="700"><strong data-dc-tpl="701" style="color: var(--heading);">The ratio is a runtime knob.</strong> You can dial recomputation up or down per request depending on whether that request cares more about latency or accuracy.</li>
+  </ul>
+
+  <h2 data-dc-tpl="702" id="results" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">7. Results</h2>
+
+  <p data-dc-tpl="703" style="margin: 0px 0px 0.75em;">Setup, so you know what the numbers mean:</p>
+
+  <ul data-dc-tpl="704" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="705"><strong data-dc-tpl="706" style="color: var(--heading);">Primary model:</strong> Qwen2.5-14B-Instruct. <strong data-dc-tpl="707" style="color: var(--heading);">Auxiliary models:</strong> SmolLM2-135M-Instruct<sup data-dc-tpl="708"><a data-dc-tpl="709" href="#ref-18" style="color: var(--accent); font-size: 0.72em;">[18]</a></sup> and Qwen2.5-0.5B-Instruct.</li>
+    <li data-dc-tpl="710"><strong data-dc-tpl="711" style="color: var(--heading);">Hardware:</strong> NVIDIA L20 GPUs, head node on 5th-gen Intel Xeon EMR 6554S.</li>
+    <li data-dc-tpl="712"><strong data-dc-tpl="713" style="color: var(--heading);">Benchmarks:</strong> RULER's retrieval category<sup data-dc-tpl="714"><a data-dc-tpl="715" href="#ref-16" style="color: var(--accent); font-size: 0.72em;">[16]</a></sup> (eight needle-in-a-haystack variants, scored by average reference coverage) and LongBench<sup data-dc-tpl="716"><a data-dc-tpl="717" href="#ref-17" style="color: var(--accent); font-size: 0.72em;">[17]</a></sup> on multifieldqa_zh, 2wikimqa and hotpotqa.</li>
+    <li data-dc-tpl="718"><strong data-dc-tpl="719" style="color: var(--heading);">Chunking:</strong> 1000 tokens with 50-token overlap. The retriever is bypassed and all chunks are used, so retriever quality does not confound the comparison.</li>
+    <li data-dc-tpl="720"><strong data-dc-tpl="721" style="color: var(--heading);">Baselines:</strong> full attention, direct reuse, APE, CacheBlend.</li>
+  </ul>
+
+  <figure data-dc-tpl="722" style="margin: 2.75rem calc(-1 * clamp(0px, 0.5 * (-760px + min(960px, -40px + 100vw)), 100px)); padding: 0px;">
+    <svg data-dc-tpl="723" viewBox="0 0 900 390" width="100%" role="img" aria-label="Two line charts. Left: RULER average versus recomputation ratio at 8192 tokens. CacheClip rises steeply and saturates while CacheBlend dips in the middle. Right: RULER average versus sequence length at 20 percent recomputation, where CacheClip degrades least.">
+      <g data-dc-tpl="724" filter="url(#rough)" fill="none" stroke-width="1.3">
+        <path data-dc-tpl="725" d="M60 60 L 60 280 L 430 280" stroke="#9aa3ad" stroke-width="1.2"></path>
+        <path data-dc-tpl="726" d="M520 60 L 520 280 L 860 280" stroke="#9aa3ad" stroke-width="1.2"></path>
+        <path data-dc-tpl="727" d="M60 62 L 430 62" stroke="#2b2f36" stroke-dasharray="6 4" stroke-width="1.1"></path>
+        <path data-dc-tpl="728" d="M60 105 L106 116 L153 111 L199 111 L245 107 L291 96 L338 77 L384 67 L430 61" stroke="#2e7d4f" stroke-width="2"></path>
+        <path data-dc-tpl="729" d="M60 131 L106 128 L153 139 L199 150 L245 140 L291 136 L338 127 L384 110 L430 93" stroke="#2f6fb3" stroke-width="2"></path>
+        <path data-dc-tpl="730" d="M60 143 L106 175 L153 233 L199 229 L245 219 L291 212 L338 188 L384 175 L430 61" stroke="#b8433a" stroke-width="2"></path>
+        <path data-dc-tpl="731" d="M520 61 L690 62 L860 64" stroke="#2b2f36" stroke-dasharray="6 4" stroke-width="1.1"></path>
+        <path data-dc-tpl="732" d="M520 97 L690 116 L860 150" stroke="#2e7d4f" stroke-width="2"></path>
+        <path data-dc-tpl="733" d="M520 113 L690 128 L860 159" stroke="#2f6fb3" stroke-width="2"></path>
+        <path data-dc-tpl="734" d="M520 135 L690 175 L860 212" stroke="#b8433a" stroke-width="2"></path>
+        <path data-dc-tpl="735" d="M520 121 L690 163 L860 211" stroke="#9aa3ad" stroke-width="2"></path>
+      </g>
+      <g data-dc-tpl="736" fill="none" stroke-width="1.6">
+        <circle data-dc-tpl="737" cx="60" cy="105" r="2.6" fill="#2e7d4f" stroke="none"></circle><circle data-dc-tpl="738" cx="106" cy="116" r="2.6" fill="#2e7d4f" stroke="none"></circle><circle data-dc-tpl="739" cx="430" cy="61" r="2.6" fill="#2e7d4f" stroke="none"></circle>
+        <circle data-dc-tpl="740" cx="106" cy="128" r="2.6" fill="#2f6fb3" stroke="none"></circle><circle data-dc-tpl="741" cx="430" cy="93" r="2.6" fill="#2f6fb3" stroke="none"></circle>
+        <circle data-dc-tpl="742" cx="106" cy="175" r="2.6" fill="#b8433a" stroke="none"></circle><circle data-dc-tpl="743" cx="153" cy="233" r="2.6" fill="#b8433a" stroke="none"></circle>
+        <circle data-dc-tpl="744" cx="520" cy="97" r="2.6" fill="#2e7d4f" stroke="none"></circle><circle data-dc-tpl="745" cx="690" cy="116" r="2.6" fill="#2e7d4f" stroke="none"></circle><circle data-dc-tpl="746" cx="860" cy="150" r="2.6" fill="#2e7d4f" stroke="none"></circle>
+        <circle data-dc-tpl="747" cx="520" cy="113" r="2.6" fill="#2f6fb3" stroke="none"></circle><circle data-dc-tpl="748" cx="690" cy="128" r="2.6" fill="#2f6fb3" stroke="none"></circle><circle data-dc-tpl="749" cx="860" cy="159" r="2.6" fill="#2f6fb3" stroke="none"></circle>
+        <circle data-dc-tpl="750" cx="520" cy="135" r="2.6" fill="#b8433a" stroke="none"></circle><circle data-dc-tpl="751" cx="690" cy="175" r="2.6" fill="#b8433a" stroke="none"></circle><circle data-dc-tpl="752" cx="860" cy="212" r="2.6" fill="#b8433a" stroke="none"></circle>
+        <circle data-dc-tpl="753" cx="520" cy="121" r="2.6" fill="#9aa3ad" stroke="none"></circle><circle data-dc-tpl="754" cx="690" cy="163" r="2.6" fill="#9aa3ad" stroke="none"></circle><circle data-dc-tpl="755" cx="860" cy="211" r="2.6" fill="#9aa3ad" stroke="none"></circle>
+      </g>
+      <g data-dc-tpl="756" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#6b7280" font-size="10.5">
+        <text data-dc-tpl="757" x="52" y="64" text-anchor="end">100</text>
+        <text data-dc-tpl="758" x="52" y="137" text-anchor="end">80</text>
+        <text data-dc-tpl="759" x="52" y="211" text-anchor="end">60</text>
+        <text data-dc-tpl="760" x="52" y="284" text-anchor="end">40</text>
+        <text data-dc-tpl="761" x="60" y="296">10%</text><text data-dc-tpl="762" x="199" y="296" text-anchor="middle">40%</text><text data-dc-tpl="763" x="338" y="296" text-anchor="middle">70%</text><text data-dc-tpl="764" x="430" y="296" text-anchor="end">90%</text>
+        <text data-dc-tpl="765" x="520" y="296" text-anchor="middle">4K</text><text data-dc-tpl="766" x="690" y="296" text-anchor="middle">8K</text><text data-dc-tpl="767" x="860" y="296" text-anchor="end">16K</text>
+        <text data-dc-tpl="768" x="437" y="66" font-size="10" fill="#2b2f36">full attn 99.41</text>
+      </g>
+      <g data-dc-tpl="769" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#2b2f36">
+        <text data-dc-tpl="770" x="60" y="26" font-size="12" font-weight="700">RULER average vs recomputation ratio</text>
+        <text data-dc-tpl="771" x="60" y="42" font-size="10.5" fill="#6b7280">Qwen2.5-14B, input 8192 tokens</text>
+        <text data-dc-tpl="772" x="520" y="26" font-size="12" font-weight="700">RULER average vs input length</text>
+        <text data-dc-tpl="773" x="520" y="42" font-size="10.5" fill="#6b7280">recomp% = 20%</text>
+        <text data-dc-tpl="774" x="60" y="330" font-size="11" fill="#2e7d4f">■ CacheClip (Qwen2.5-0.5B aux)</text>
+        <text data-dc-tpl="775" x="300" y="330" font-size="11" fill="#2f6fb3">■ CacheClip (SmolLM2-135M aux)</text>
+        <text data-dc-tpl="776" x="560" y="330" font-size="11" fill="#b8433a">■ CacheBlend</text>
+        <text data-dc-tpl="777" x="700" y="330" font-size="11" fill="#9aa3ad">■ APE</text>
+        <text data-dc-tpl="778" x="790" y="330" font-size="11" fill="#2b2f36">-- full attention</text>
+        <text data-dc-tpl="779" x="60" y="356" font-size="11" fill="#6b7280">Left: CacheClip is already near its ceiling at 10 to 20% recomputation. CacheBlend gets worse before it gets better,</text>
+        <text data-dc-tpl="780" x="60" y="372" font-size="11" fill="#6b7280">then jumps at 90% when recomputation is broad enough to stop fragmenting multi-token entities.</text>
+      </g>
+    </svg>
+    <figcaption data-dc-tpl="781" style="font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 0.9rem;">Figure 7: Redrawn from Figure 6 of the paper, plotted from the appendix tables. Left, RULER average against recomputation budget at 8192 tokens. Right, RULER average against input length at a fixed 20% budget.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="782" style="margin: 0px 0px 0.75em;">Reading the left chart:</p>
+
+  <ul data-dc-tpl="783" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="784"><strong data-dc-tpl="785" style="color: var(--heading);">CacheClip saturates immediately.</strong> The curve is nearly flat from 10% onward, which is the signature of a selector that finds the most valuable tokens first. That is attention sparsity paying off exactly as predicted.</li>
+    <li data-dc-tpl="786"><strong data-dc-tpl="787" style="color: var(--heading);">CacheBlend is U-shaped.</strong> It scores 77.43 at 10%, drops to 52.93 at 30%, and does not recover until very high budgets. More recomputation making quality worse is a strong signal that the selection rule is not just imprecise but actively harmful, because partial recomputation fragments multi-token entities.</li>
+    <li data-dc-tpl="788"><strong data-dc-tpl="789" style="color: var(--heading);">The 90% jump is not a win.</strong> Everything converges near full attention at 90% because you are barely reusing anything. It tells you nothing about the useful operating range.</li>
+    <li data-dc-tpl="790"><strong data-dc-tpl="791" style="color: var(--heading);">Auxiliary model quality matters.</strong> Qwen2.5-0.5B (green) sits above SmolLM2-135M (blue) almost everywhere, matching its higher Jaccard alignment in Table 1.</li>
+  </ul>
+
+  <p data-dc-tpl="792" style="margin: 0px 0px 0.75em;">Reading the right chart:</p>
+
+  <ul data-dc-tpl="793" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="794">Going from 4K to 16K at a fixed 20% budget, <strong data-dc-tpl="795" style="color: var(--heading);">APE drops 24.5 points</strong> and <strong data-dc-tpl="796" style="color: var(--heading);">CacheBlend drops 21.0</strong>.</li>
+    <li data-dc-tpl="797"><strong data-dc-tpl="798" style="color: var(--heading);">CacheClip drops 12.5</strong> with SmolLM2-135M and 14.6 with Qwen2.5-0.5B.</li>
+    <li data-dc-tpl="799">At 16K the baselines converge around 58 while CacheClip holds 72.9 and 75.4.</li>
+    <li data-dc-tpl="800">This matters because longer contexts are where cache reuse is most valuable, and it is also where naive selection degrades fastest.</li>
+  </ul>
+
+  <p data-dc-tpl="801" style="margin: 0px 0px 1.35em;">On LongBench, which is closer to real workloads than synthetic needle retrieval:</p>
+
+  <div data-dc-tpl="802" style="overflow-x: auto; margin: 1.75rem 0px;">
+    <table data-dc-tpl="803" style="width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.55;">
+      <thead data-dc-tpl="804">
+        <tr data-dc-tpl="805">
+          <th data-dc-tpl="806" style="text-align: left; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Method</th>
+          <th data-dc-tpl="807" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">multifieldqa_zh</th>
+          <th data-dc-tpl="808" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">2wikimqa</th>
+          <th data-dc-tpl="809" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">hotpotqa</th>
+        </tr>
+      </thead>
+      <tbody data-dc-tpl="810">
+        <tr data-dc-tpl="811"><td data-dc-tpl="812" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Direct reuse</td><td data-dc-tpl="813" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">49.44</td><td data-dc-tpl="814" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">37.70</td><td data-dc-tpl="815" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">44.63</td></tr>
+        <tr data-dc-tpl="816"><td data-dc-tpl="817" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">APE</td><td data-dc-tpl="818" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">59.70</td><td data-dc-tpl="819" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">38.34</td><td data-dc-tpl="820" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">45.29</td></tr>
+        <tr data-dc-tpl="821"><td data-dc-tpl="822" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">CacheBlend, 20%</td><td data-dc-tpl="823" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">57.34</td><td data-dc-tpl="824" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">41.08</td><td data-dc-tpl="825" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">44.11</td></tr>
+        <tr data-dc-tpl="826"><td data-dc-tpl="827" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">CacheClip, 20%, SmolLM2-135M</td><td data-dc-tpl="828" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">62.43</td><td data-dc-tpl="829" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">41.40</td><td data-dc-tpl="830" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">52.12</td></tr>
+        <tr data-dc-tpl="831"><td data-dc-tpl="832" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">CacheClip, 20%, Qwen2.5-0.5B</td><td data-dc-tpl="833" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">61.37</td><td data-dc-tpl="834" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">46.04</td><td data-dc-tpl="835" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">55.74</td></tr>
+        <tr data-dc-tpl="836"><td data-dc-tpl="837" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--muted);">Full attention</td><td data-dc-tpl="838" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">64.93</td><td data-dc-tpl="839" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">54.36</td><td data-dc-tpl="840" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">59.71</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <ul data-dc-tpl="841" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="842"><strong data-dc-tpl="843" style="color: var(--heading);">hotpotqa is the interesting column.</strong> It is multi-hop QA, so it needs cross-chunk reasoning, which is precisely what selective recomputation restores. CacheClip with SmolLM2 beats CacheBlend by 8.0 points and APE by 6.8 there.</li>
+    <li data-dc-tpl="844"><strong data-dc-tpl="845" style="color: var(--heading);">With the Qwen2.5-0.5B auxiliary model, CacheClip reaches 91.1% of full-attention quality</strong> averaged across the three datasets.</li>
+    <li data-dc-tpl="846"><strong data-dc-tpl="847" style="color: var(--heading);">Averaged, CacheClip with SmolLM2 leads CacheBlend by 4.5 and APE by 4.2 points.</strong></li>
+    <li data-dc-tpl="848"><strong data-dc-tpl="849" style="color: var(--heading);">The gap to full attention is still real.</strong> 2wikimqa at 46.04 against 54.36 is not close. This is a speed-quality trade, not a free lunch.</li>
+  </ul>
+
+  <div data-dc-tpl="850" style="background: var(--note-bg); border-left: 3px solid var(--note-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="851" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Note: one inconsistency in the source</strong>
+    The paper's RULER discussion cites 96.00 on the multivalue task at 20% recomputation, sourced from its Figure 5. The appendix table for the same configuration (Qwen2.5-14B, 8192 tokens, 20%, SmolLM2-135M auxiliary) reports 72.00 on multivalue, and 83.50 with the Qwen2.5-0.5B auxiliary. The comparison against CacheBlend's 42.97 is consistent either way, and the qualitative conclusion holds, but I have plotted the appendix tables above rather than the figure because they are unambiguous about which configuration produced them.
+  </div>
+
+  <h2 data-dc-tpl="852" id="ablation" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">8. Which piece does the work</h2>
+
+  <p data-dc-tpl="853" style="margin: 0px 0px 1.35em;">The ablation is the most useful table in the paper, because it shows the two mechanisms are not interchangeable. Each one owns a different benchmark, for a reason that maps cleanly back to Figure 2.</p>
+
+  
+  <div data-dc-tpl="855" style="overflow-x: auto; margin: 1.75rem 0px;">
+    <table data-dc-tpl="856" style="width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.55;">
+      <thead data-dc-tpl="857">
+        <tr data-dc-tpl="858">
+          <th data-dc-tpl="859" style="text-align: left; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">RULER, 8192 tok, 20% recomp</th>
+          <th data-dc-tpl="860" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">multivalue</th>
+          <th data-dc-tpl="861" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Average</th>
+        </tr>
+      </thead>
+      <tbody data-dc-tpl="862">
+        <tr data-dc-tpl="863"><td data-dc-tpl="864" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Neither component</td><td data-dc-tpl="865" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">25.25</td><td data-dc-tpl="866" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">40.47</td></tr>
+        <tr data-dc-tpl="867"><td data-dc-tpl="868" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Shared prefix only</td><td data-dc-tpl="869" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">26.25</td><td data-dc-tpl="870" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">38.66</td></tr>
+        <tr data-dc-tpl="871"><td data-dc-tpl="872" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">Grouping only</td><td data-dc-tpl="873" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">74.50</td><td data-dc-tpl="874" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">81.28</td></tr>
+        <tr data-dc-tpl="875"><td data-dc-tpl="876" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">Both</td><td data-dc-tpl="877" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">72.00</td><td data-dc-tpl="878" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">81.50</td></tr>
+        <tr data-dc-tpl="879"><td data-dc-tpl="880" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--muted);">Full attention</td><td data-dc-tpl="881" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">96.25</td><td data-dc-tpl="882" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">99.41</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div data-dc-tpl="883" style="overflow-x: auto; margin: 1.75rem 0px;">
+    <table data-dc-tpl="884" style="width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.55;">
+      <thead data-dc-tpl="885">
+        <tr data-dc-tpl="886">
+          <th data-dc-tpl="887" style="text-align: left; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">LongBench, 20% recomp</th>
+          <th data-dc-tpl="888" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">2wikimqa</th>
+          <th data-dc-tpl="889" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">hotpotqa</th>
+          <th data-dc-tpl="890" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Average</th>
+        </tr>
+      </thead>
+      <tbody data-dc-tpl="891">
+        <tr data-dc-tpl="892"><td data-dc-tpl="893" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Direct reuse, no recomputation</td><td data-dc-tpl="894" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">37.70</td><td data-dc-tpl="895" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">44.63</td><td data-dc-tpl="896" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">43.92</td></tr>
+        <tr data-dc-tpl="897"><td data-dc-tpl="898" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Recompute only</td><td data-dc-tpl="899" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">37.84</td><td data-dc-tpl="900" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">47.61</td><td data-dc-tpl="901" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">49.40</td></tr>
+        <tr data-dc-tpl="902"><td data-dc-tpl="903" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">Recompute + shared prefix</td><td data-dc-tpl="904" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">42.70</td><td data-dc-tpl="905" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">48.96</td><td data-dc-tpl="906" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">50.91</td></tr>
+        <tr data-dc-tpl="907"><td data-dc-tpl="908" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Recompute + grouping</td><td data-dc-tpl="909" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">40.90</td><td data-dc-tpl="910" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">47.45</td><td data-dc-tpl="911" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">49.51</td></tr>
+        <tr data-dc-tpl="912"><td data-dc-tpl="913" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">All three</td><td data-dc-tpl="914" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">41.40</td><td data-dc-tpl="915" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">52.12</td><td data-dc-tpl="916" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">51.98</td></tr>
+      </tbody>
+    </table>
+  </div>
+  
+
+  <ul data-dc-tpl="917" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="918"><strong data-dc-tpl="919" style="color: var(--heading);">On RULER, grouping is everything.</strong> It moves the average from 40.47 to 81.28, a gain of 40.81 points. Shared prefix adds 0.22 on top. RULER's needles are numbers and UUIDs, so entity fragmentation is the dominant failure mode and grouping is the direct fix.</li>
+    <li data-dc-tpl="920"><strong data-dc-tpl="921" style="color: var(--heading);">On LongBench, shared prefix is everything.</strong> It adds 1.51 points on average, concentrated in the multi-hop datasets (2wikimqa +4.86, hotpotqa +1.35). Grouping alone adds 0.11.</li>
+    <li data-dc-tpl="922"><strong data-dc-tpl="923" style="color: var(--heading);">Neither is redundant.</strong> The two components address the two failures in Figure 2: grouping repairs local continuity, shared prefix repairs global attention distribution. Different benchmarks stress different failures.</li>
+    <li data-dc-tpl="924"><strong data-dc-tpl="925" style="color: var(--heading);">Watch out for a trap in the RULER table.</strong> Shared prefix <em data-dc-tpl="926">without</em> grouping is slightly worse than neither (38.66 vs 40.47). Fixing the sink distribution does not help if your recomputation is busy corrupting entities.</li>
+  </ul>
+
+  <h2 data-dc-tpl="927" id="speed" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">9. Where the 3.33× comes from</h2>
+
+  <p data-dc-tpl="928" style="margin: 0px 0px 1.35em;">Single NVIDIA L20, 16K input tokens, Qwen2.5-14B primary, SmolLM2-135M auxiliary on an Intel Xeon 6554S, 20% recomputation.</p>
+
+  <div data-dc-tpl="929" style="overflow-x: auto; margin: 1.75rem 0px;">
+    <table data-dc-tpl="930" style="width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.55;">
+      <thead data-dc-tpl="931">
+        <tr data-dc-tpl="932">
+          <th data-dc-tpl="933" style="text-align: left; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Method</th>
+          <th data-dc-tpl="934" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Token selection</th>
+          <th data-dc-tpl="935" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Recomputation</th>
+          <th data-dc-tpl="936" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Other</th>
+          <th data-dc-tpl="937" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Total</th>
+          <th data-dc-tpl="938" style="text-align: right; padding: 0.5rem 0.6rem; border-bottom: 2px solid var(--rule); color: var(--heading); font-weight: 700;">Speedup</th>
+        </tr>
+      </thead>
+      <tbody data-dc-tpl="939">
+        <tr data-dc-tpl="940"><td data-dc-tpl="941" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule);">Full attention</td><td data-dc-tpl="942" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">n/a</td><td data-dc-tpl="943" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">n/a</td><td data-dc-tpl="944" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--muted);">n/a</td><td data-dc-tpl="945" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">5.641 s</td><td data-dc-tpl="946" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">1.00×</td></tr>
+        <tr data-dc-tpl="947"><td data-dc-tpl="948" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); color: var(--heading);">CacheClip</td><td data-dc-tpl="949" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.238 s</td><td data-dc-tpl="950" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">1.332 s</td><td data-dc-tpl="951" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right;">0.125 s</td><td data-dc-tpl="952" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">1.695 s</td><td data-dc-tpl="953" style="padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); text-align: right; color: var(--heading);">3.33×</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <ul data-dc-tpl="954" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="955"><strong data-dc-tpl="956" style="color: var(--heading);">Recomputation dominates at 78.6% of total latency.</strong> That is where the recomputation ratio knob acts, and it is close to linear in the ratio.</li>
+    <li data-dc-tpl="957"><strong data-dc-tpl="958" style="color: var(--heading);">Token selection costs 0.238 s and most of it is free.</strong> It runs on CPU and overlaps with the GPU loading primary KV caches.</li>
+    <li data-dc-tpl="959"><strong data-dc-tpl="960" style="color: var(--heading);">Recomputation needs a custom kernel.</strong> The paper uses a Triton<sup data-dc-tpl="961"><a data-dc-tpl="962" href="#ref-24" style="color: var(--accent); font-size: 0.72em;">[24]</a></sup> Flash Attention kernel that accepts sparse query indices. Stock implementations assume dense contiguous queries, so an off-the-shelf reimplementation will not hit these numbers.</li>
+    <li data-dc-tpl="963"><strong data-dc-tpl="964" style="color: var(--heading);">Storage is the cost you do not see in this table.</strong> You now maintain two KV cache stores, primary and auxiliary, for the entire corpus. The auxiliary one is small at 135M parameters, but the primary store is not.</li>
+  </ul>
+
+  <h2 data-dc-tpl="965" id="limitations" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">10. When not to use this</h2>
+
+  <p data-dc-tpl="966" style="margin: 0px 0px 1.35em;">Being honest about where this does not apply, based on what the paper reports and what it does not.</p>
+
+  <ul data-dc-tpl="967" style="display: flex; flex-direction: column; gap: 0.6rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="968"><strong data-dc-tpl="969" style="color: var(--heading);">Quality is still below full attention.</strong> 85.2% of full-attention performance on NIAH and 91.1% on LongBench at 20% recomputation. If your application cannot absorb that, this is not your technique.</li>
+    <li data-dc-tpl="970"><strong data-dc-tpl="971" style="color: var(--heading);">You need a real chunk cache store.</strong> Precomputed KV caches for a whole corpus are large, and you need two of them. If your corpus turns over quickly, precomputation amortizes badly.</li>
+    <li data-dc-tpl="972"><strong data-dc-tpl="973" style="color: var(--heading);">You need idle CPU on the head node.</strong> The whole no-extra-GPU-cost argument rests on that. In a CPU-saturated serving setup the auxiliary model has to go somewhere else, and the accounting changes.</li>
+    <li data-dc-tpl="974"><strong data-dc-tpl="975" style="color: var(--heading);">A custom sparse-query attention kernel is required.</strong> This is real engineering, not a config change.</li>
+    <li data-dc-tpl="976"><strong data-dc-tpl="977" style="color: var(--heading);">The evaluation is single-model.</strong> Everything end-to-end uses Qwen2.5-14B-Instruct as the primary model. The attention-alignment study covers LLaMA-3.1-8B and Ministral-8B, but the full pipeline results do not.</li>
+    <li data-dc-tpl="978"><strong data-dc-tpl="979" style="color: var(--heading);">The hyperparameters are not swept.</strong> Window size w=8 and threshold τ=5 are given as defaults with no sensitivity analysis. Given how much of the RULER gain comes from grouping, that is the ablation I most want to see.</li>
+    <li data-dc-tpl="980"><strong data-dc-tpl="981" style="color: var(--heading);">No throughput or concurrency numbers.</strong> Latency is measured on a single request on a single GPU. How this behaves under batching and contention is open.</li>
+  </ul>
+
+  <h2 data-dc-tpl="982" id="takeaways" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">11. Takeaways</h2>
+
+  <ol data-dc-tpl="983" style="display: flex; flex-direction: column; gap: 0.65rem; margin: 0px 0px 1.5rem; padding-left: 1.6rem;">
+    <li data-dc-tpl="984"><strong data-dc-tpl="985" style="color: var(--heading);">Independent chunk caches fail in two ways, and you have to fix both.</strong> Repeated sinks and missing cross-chunk attention have different causes and different cures. Prior work generally addresses one.</li>
+    <li data-dc-tpl="986"><strong data-dc-tpl="987" style="color: var(--heading);">A 135M model is a better attention oracle for a 14B model than the 14B model's own first layer.</strong> This holds across four model pairs, five sequence lengths and 200 samples each, including across architectures and tokenizers. It is the most transferable idea in the paper.</li>
+    <li data-dc-tpl="988"><strong data-dc-tpl="989" style="color: var(--heading);">Selection quality beats selection budget.</strong> CacheClip hits its ceiling around 10 to 20% recomputation. CacheBlend needs 70% or more to reach comparable quality on cross-chunk tasks.</li>
+    <li data-dc-tpl="990"><strong data-dc-tpl="991" style="color: var(--heading);">Contiguity is not a detail.</strong> Grouping is worth 40 points on RULER. Recomputing scattered tokens splits multi-token entities and corrupts the cache, which is why CacheBlend gets worse as its budget grows.</li>
+    <li data-dc-tpl="992"><strong data-dc-tpl="993" style="color: var(--heading);">Putting the selector on the CPU is what makes it deployable.</strong> The auxiliary model adds no GPU memory, no GPU compute, no multi-card imbalance, and its latency hides behind cache loading.</li>
+    <li data-dc-tpl="994"><strong data-dc-tpl="995" style="color: var(--heading);">3.33× faster prefill at roughly 85 to 91% of full-attention quality, tunable at runtime.</strong> Whether that trade is good depends entirely on your application, and the ratio knob means you do not have to decide once for all requests.</li>
+  </ol>
+
+  <div data-dc-tpl="996" style="background: var(--tip-bg); border-left: 3px solid var(--tip-border); border-radius: 3px; padding: 1rem 1.25rem; margin: 2rem 0px; font-size: 0.94em; line-height: 1.65;">
+    <strong data-dc-tpl="997" style="color: var(--heading); display: block; margin-bottom: 0.4rem;">Worth watching</strong>
+    The paper's own suggested next step is finetuning the auxiliary model specifically to predict the primary model's attention. Since auxiliary models are under 1B parameters, that training run is cheap compared to finetuning the primary model, and it targets the exact bottleneck: selection accuracy. It also generalizes beyond RAG to any workload that injects large text blocks into context, including agentic tool output.
+  </div>
+
+  <h2 data-dc-tpl="998" id="references" style="font-size: clamp(21px, 2.8vw, 25px); line-height: 1.3; font-weight: 700; color: var(--heading); margin: 3.5rem 0px 1.25rem;">References</h2>
+
+  <ol data-dc-tpl="999" style="display: flex; flex-direction: column; gap: 0.55rem; margin: 0px; padding-left: 1.8rem; font-size: 14px; line-height: 1.7; overflow-wrap: break-word;">
+    <li data-dc-tpl="1000" id="ref-1">Yang, Leng, Zeng, Wu. CacheClip: Accelerating RAG with Effective KV Cache Reuse. Intel Corporation, 2026. <a data-dc-tpl="1001" href="https://arxiv.org/abs/2510.10129">https://arxiv.org/abs/2510.10129</a></li>
+    <li data-dc-tpl="1002" id="ref-2">Yao et al. CacheBlend: Fast Large Language Model Serving with Cached Knowledge Fusion, 2024. <a data-dc-tpl="1003" href="https://arxiv.org/abs/2405.16444">https://arxiv.org/abs/2405.16444</a></li>
+    <li data-dc-tpl="1004" id="ref-3">Yang, Chen, Chen. APE: Faster and Longer Context-Augmented Generation via Adaptive Parallel Encoding. ICLR 2025.</li>
+    <li data-dc-tpl="1005" id="ref-4">Xiao et al. Efficient Streaming Language Models with Attention Sinks, 2023. <a data-dc-tpl="1006" href="https://arxiv.org/abs/2309.17453">https://arxiv.org/abs/2309.17453</a></li>
+    <li data-dc-tpl="1007" id="ref-5">Gim et al. Prompt Cache: Modular Attention Reuse for Low-Latency Inference. MLSys 6, 2024.</li>
+    <li data-dc-tpl="1008" id="ref-6">Jin et al. RAGCache: Efficient Knowledge Caching for Retrieval-Augmented Generation, 2024. <a data-dc-tpl="1009" href="https://arxiv.org/abs/2404.12457">https://arxiv.org/abs/2404.12457</a></li>
+    <li data-dc-tpl="1010" id="ref-7">Kwon et al. Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP 2023.</li>
+    <li data-dc-tpl="1011" id="ref-8">Zheng et al. Efficiently Programming Large Language Models using SGLang, 2023. <a data-dc-tpl="1012" href="https://arxiv.org/abs/2312.07104">https://arxiv.org/abs/2312.07104</a></li>
+    <li data-dc-tpl="1013" id="ref-9">Sun, Wang, Tian. Block-Attention for Efficient RAG, 2024. <a data-dc-tpl="1014" href="https://arxiv.org/abs/2409.15355">https://arxiv.org/abs/2409.15355</a></li>
+    <li data-dc-tpl="1015" id="ref-10">Lu et al. TurboRAG: Accelerating Retrieval-Augmented Generation with Precomputed KV Caches for Chunked Text, 2024. <a data-dc-tpl="1016" href="https://arxiv.org/abs/2410.07590">https://arxiv.org/abs/2410.07590</a></li>
+    <li data-dc-tpl="1017" id="ref-11">Yang et al. KVLink: Accelerating Large Language Models via Efficient KV Cache Reuse, 2025. <a data-dc-tpl="1018" href="https://arxiv.org/abs/2502.16002">https://arxiv.org/abs/2502.16002</a></li>
+    <li data-dc-tpl="1019" id="ref-12">Zhang et al. Attention Entropy is a Key Factor: An Analysis of Parallel Context Encoding, 2024. <a data-dc-tpl="1020" href="https://arxiv.org/abs/2412.16545">https://arxiv.org/abs/2412.16545</a></li>
+    <li data-dc-tpl="1021" id="ref-13">Agarwal et al. Cache-Craft: Managing Chunk-Caches for Efficient Retrieval-Augmented Generation. PACMMOD 3(3), 2025.</li>
+    <li data-dc-tpl="1022" id="ref-14">Zhang et al. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. NeurIPS 36, 2023.</li>
+    <li data-dc-tpl="1023" id="ref-15">Li et al. SnapKV: LLM Knows What You Are Looking For Before Generation. NeurIPS 37, 2024.</li>
+    <li data-dc-tpl="1024" id="ref-16">Hsieh et al. RULER: What's the Real Context Size of Your Long-Context Language Models? 2024. <a data-dc-tpl="1025" href="https://arxiv.org/abs/2404.06654">https://arxiv.org/abs/2404.06654</a></li>
+    <li data-dc-tpl="1026" id="ref-17">Bai et al. LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding, 2023. <a data-dc-tpl="1027" href="https://arxiv.org/abs/2308.14508">https://arxiv.org/abs/2308.14508</a></li>
+    <li data-dc-tpl="1028" id="ref-18">Ben Allal et al. SmolLM2: When Smol Goes Big, 2025.</li>
+    <li data-dc-tpl="1029" id="ref-19">AbouElhamayed et al. SpArAMX: Accelerating Compressed LLMs Token Generation on AMX-Powered CPUs, 2025. <a data-dc-tpl="1030" href="https://arxiv.org/abs/2502.12444">https://arxiv.org/abs/2502.12444</a></li>
+    <li data-dc-tpl="1031" id="ref-20">Intel. Accelerate AI Workloads with Intel Advanced Matrix Extensions, 2022.</li>
+    <li data-dc-tpl="1032" id="ref-21">Ho et al. Constructing a Multi-hop QA Dataset for Comprehensive Evaluation of Reasoning Steps. COLING 2020.</li>
+    <li data-dc-tpl="1033" id="ref-22">Tang et al. Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference, 2024. <a data-dc-tpl="1034" href="https://arxiv.org/abs/2406.10774">https://arxiv.org/abs/2406.10774</a></li>
+    <li data-dc-tpl="1035" id="ref-23">Cai et al. PyramidKV: Dynamic KV Cache Compression Based on Pyramidal Information Funneling, 2024. <a data-dc-tpl="1036" href="https://arxiv.org/abs/2406.02069">https://arxiv.org/abs/2406.02069</a></li>
+    <li data-dc-tpl="1037" id="ref-24">Tillet, Kung, Cox. Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations. MAPL 2019.</li>
+  </ol></article></div></div>
+
+
+
+</body></html>
