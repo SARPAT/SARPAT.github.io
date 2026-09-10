@@ -374,6 +374,18 @@ footer .footer-links a:hover {
   margin-bottom: 0.3rem;
 }
 
+/* ---- Secondary link on a project (e.g. a live demo) ---- */
+.project-demo {
+  display: inline-block;
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-bottom: 0.4rem;
+}
+
+.project-demo:hover {
+  color: #2563eb;
+}
+
 .project-desc {
   font-size: 0.95rem;
   color: #1a1a1a;
