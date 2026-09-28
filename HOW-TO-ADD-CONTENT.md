@@ -11,6 +11,7 @@ No build step. No framework. Just edit HTML and push.
 | I want to...                        | File to open                                      |
 |-------------------------------------|---------------------------------------------------|
 | Add a new blog post                 | drop file in `blogs/` + edit `blogs.html`         |
+| Add a new experiment/research report | drop file in `experiments/` + edit `experiments.html` |
 | Add a new book                      | `readings/books.html` + create new file in `readings/books/` |
 | Add a new read to an existing book  | `readings/books/your-book-file.html`              |
 | Add a new paper                     | `readings/research-papers.html` + create new file in `readings/papers/` |
@@ -120,7 +121,58 @@ Same `<li>` block, but point the href at the full URL and add `target="_blank"`:
 
 ---
 
-## 2. ADD A NEW READ TO AN EXISTING BOOK
+## 2. ADD A NEW EXPERIMENT / RESEARCH REPORT
+
+The Experiments/Research section works exactly like Blogs — same publishing
+flow, same file layout, same `entry-list` markup. It exists as a separate
+section so casual write-ups (blogs) stay apart from the odder, more
+exploratory stuff (experiments and research reports).
+
+### Step A — Draft and export
+
+Same as blog posts (see section 1, Step A): write it in Claude design, export
+with **Standalone HTML** for a plain-text report, or **Project archive** if it
+has figures/diagrams.
+
+### Step B — Put the files in place
+
+Identical to section 1, Step B, but into `experiments/` instead of `blogs/`:
+
+- **Project archive** → create `experiments/your-report-slug/`, copy in
+  `blog/index.html`, `blog/styles/`, `blog/assets/` (same exclusions apply —
+  no `uploads/`, `support.js`, `.thumbnail`, `source/`, `data/`, `*.dc.html`).
+- **Standalone HTML** → rename to `experiments/your-report-slug.html` and add
+  the back-link bar from `experiments/_paste-into-export.html` just after
+  `<body>`.
+
+### Step C — Fix the export's placeholders
+
+Same fixes as section 1, Step C — the dead `href="#"` back link and the
+`example.com` URLs in the `<head>` — pointed at
+`https://sarpat.github.io/experiments/your-report-slug/` this time.
+
+### Step D — Publish
+
+1. Open `experiments.html` and find this comment:
+   ```
+   <!-- ===== COPY THIS BLOCK FOR A NEW REPORT =====
+   ```
+2. Copy the block inside it, paste it at the TOP of the `<ul>` (latest first),
+   and uncomment it:
+   ```html
+   <li>
+     <a href="./experiments/your-report-slug/">Title of Experiment / Report</a>
+     <div class="entry-meta">DD Mon YYYY</div>
+     <p class="entry-desc">One-line summary of what the experiment covers.</p>
+   </li>
+   ```
+3. On your **first** report only: delete the "No experiments published yet"
+   line just below the `</ul>`.
+4. Save → push to GitHub.
+
+---
+
+## 3. ADD A NEW READ TO AN EXISTING BOOK
 
 **File:** `readings/books/your-book-file.html`
 
@@ -139,7 +191,7 @@ Same `<li>` block, but point the href at the full URL and add `target="_blank"`:
 
 ---
 
-## 3. ADD A BRAND NEW BOOK
+## 4. ADD A BRAND NEW BOOK
 
 Two steps — create the book's page, then add it to the books list.
 
@@ -173,43 +225,43 @@ Two steps — create the book's page, then add it to the books list.
 
 ---
 
-## 4. ADD A NEW READ TO AN EXISTING PAPER
+## 5. ADD A NEW READ TO AN EXISTING PAPER
 
 **File:** `readings/papers/your-paper-file.html`
 
-Same as adding a read to a book (Section 2 above).
+Same as adding a read to a book (Section 3 above).
 Open the paper's HTML file → find READS comment → copy `<li>` → paste at top → update → push.
 
 ---
 
-## 5. ADD A BRAND NEW PAPER
+## 6. ADD A BRAND NEW PAPER
 
-Same as adding a new book (Section 3 above).
+Same as adding a new book (Section 4 above).
 - Copy `readings/papers/sample-paper.html` → rename
 - Update title, description, authors, reference link
 - Add to `readings/research-papers.html` list
 
 ---
 
-## 6. ADD A NEW LECTURE NOTE TO AN EXISTING COURSE
+## 7. ADD A NEW LECTURE NOTE TO AN EXISTING COURSE
 
 **File:** `readings/lectures/your-course-file.html`
 
-Same as adding a read to a book (Section 2 above).
+Same as adding a read to a book (Section 3 above).
 Open the course's HTML file → find READS comment → copy `<li>` → paste at top → update → push.
 
 ---
 
-## 7. ADD A BRAND NEW COURSE / LECTURE SOURCE
+## 8. ADD A BRAND NEW COURSE / LECTURE SOURCE
 
-Same as adding a new book (Section 3 above).
+Same as adding a new book (Section 4 above).
 - Copy `readings/lectures/sample-course.html` → rename
 - Update title, description, source/instructor, reference link
 - Add to `readings/lectures.html` list
 
 ---
 
-## 8. ADD A NEW OTHER READING
+## 9. ADD A NEW OTHER READING
 
 Same pattern as above.
 - Copy `readings/other/sample-other.html` → rename
@@ -218,7 +270,7 @@ Same pattern as above.
 
 ---
 
-## 9. ADD A NEW PROJECT
+## 10. ADD A NEW PROJECT
 
 **File:** `index.html`
 
@@ -244,14 +296,14 @@ Same pattern as above.
 
 ---
 
-## 10. REMOVE ANY ENTRY
+## 11. REMOVE ANY ENTRY
 
 Find the `<li>...</li>` block for that entry and delete it entirely.
 Save → push to GitHub.
 
 ---
 
-## 11. UPDATE PERSONAL DETAILS (email, CV, Twitter, GitHub)
+## 12. UPDATE PERSONAL DETAILS (email, CV, Twitter, GitHub)
 
 **File:** `index.html`
 
@@ -266,7 +318,7 @@ Save → push to GitHub.
 
 ---
 
-## 12. PUSH TO GITHUB (reminder)
+## 13. PUSH TO GITHUB (reminder)
 
 After any edit, run these commands in your terminal from the project folder:
 
@@ -297,6 +349,7 @@ SARPAT.github.io/
 ├── index.html              ← Home page
 ├── readings.html           ← Readings hub
 ├── blogs.html              ← Blogs list
+├── experiments.html        ← Experiments/Research list
 ├── style.css               ← Shared styles (do not edit unless you know what you are doing)
 ├── HOW-TO-ADD-CONTENT.md  ← This file
 ├── docs/                   ← CP markdown files (for reference only)
@@ -306,6 +359,8 @@ SARPAT.github.io/
 │   │   ├── styles/
 │   │   └── assets/figures/
 │   └── _paste-into-export.html   ← Back-link snippet, not a post
+├── experiments/             ← Published experiment/research reports (same pattern as blogs/)
+│   └── _paste-into-export.html   ← Back-link snippet, not a report
 └── readings/
     ├── books.html          ← Books list
     ├── research-papers.html
