@@ -14,9 +14,9 @@
       <a href="/" class="nav-name">Saransh Patel</a>
       <ul class="nav-links">
         <li><a href="/">Home</a></li>
-        <li><a href="/experiments.html">Experiments/Research</a></li>
+        <li><a href="/experiments.html" class="active">Experiments/Research</a></li>
         <li><a href="/readings.html">Readings</a></li>
-        <li><a href="/blogs.html" class="active">Blogs</a></li>
+        <li><a href="/blogs.html">Blogs</a></li>
         <li><a href="https://drive.google.com/file/d/1rX5eIHrKduvFtwxNV6yCdi905bsHMQzC/preview" target="_blank">CV</a></li>
       </ul>
     </div>
@@ -24,56 +24,47 @@
 
   <!-- PAGE CONTENT -->
   <div class="container">
-    <h1>Technical Blogs</h1>
-    <p class="muted">Writing about ML systems, GPU programming, inference optimization, and things I learn along the way.</p>
+    <h1>Experiments/Research</h1>
+    <p class="muted">Welcome to my Weird Research section — Here I publish about experiments originating from my weird research ideas.</p>
 
     <hr>
 
-    <!-- ===== BLOG POSTS =====
-         PUBLISHING FLOW (see HOW-TO-ADD-CONTENT.md section 1 for the full walkthrough):
-           1. Draft the post in Claude design.
+    <!-- ===== EXPERIMENT / RESEARCH REPORTS =====
+         PUBLISHING FLOW (see HOW-TO-ADD-CONTENT.md section 2 for the full walkthrough):
+           1. Draft the report in Claude design.
            2. Export it with the "Standalone HTML" option (NOT "Project archive").
            3. Rename the downloaded file: lowercase, hyphens, .html
-              e.g. kv-cache-transitions.html
-           4. Drop it into the  blogs/  folder.
+              e.g. weird-attention-experiment.html
+           4. Drop it into the  experiments/  folder.
            5. Copy the <li> block below, paste it at the TOP of the list, update the
               href / title / date / description.
-           6. git add . && git commit -m "blog: <title>" && git push
+           6. git add . && git commit -m "experiment: <title>" && git push
 
-         href format : ./blogs/your-file-name.html   (local post — the normal case)
-                       https://...                    (external post — add target="_blank")
+         href format : ./experiments/your-file-name.html   (local report — the normal case)
+                       https://...                          (external report — add target="_blank")
 
          The date and description lines are optional; delete either one if not needed.
          ======================== -->
     <ul class="entry-list">
 
-      <!-- ===== COPY THIS BLOCK FOR A NEW POST =====
+      <!-- ===== COPY THIS BLOCK FOR A NEW REPORT =====
       <li>
-        <a href="./blogs/your-post-slug/">Title of Blog Post</a>
+        <a href="./experiments/your-report-slug/">Title of Experiment / Report</a>
         <div class="entry-meta">DD Mon YYYY</div>
-        <p class="entry-desc">One-line summary of what the post covers.</p>
+        <p class="entry-desc">One-line summary of what the experiment covers.</p>
       </li>
       ============================================= -->
 
-      <li>
-        <a href="./blogs/cacheclip/">CacheClip: making RAG prefill 3.33× faster without giving up the answer</a>
-        <div class="entry-meta">29 Aug 2026 · 18 min read</div>
-        <p class="entry-desc">How a 135M-parameter helper model decides which KV cache entries the 14B model actually needs to recompute.</p>
-      </li>
-
-      <li>
-        <a href="./blogs/cacheblend/">CacheBlend: reusing KV caches for RAG without losing cross-attention</a>
-        <div class="entry-meta">14 Aug 2026 · 16 min read</div>
-        <p class="entry-desc">Recomputing about 15% of the tokens per layer buys you the speed of KV reuse and the quality of a full prefill.</p>
-      </li>
-
     </ul>
+
+    <!-- Delete this line once the first report is published. -->
+    <p class="muted">No experiments published yet — first one is on the way.</p>
   </div>
 
   <!-- FOOTER -->
   <footer>
     <div class="container">
-      
+
       <div class="footer-links">
         <a href="mailto:saranshappy@gmail.com">saranshappy@gmail.com</a>
         <a href="https://github.com/SARPAT" target="_blank">GitHub</a>
