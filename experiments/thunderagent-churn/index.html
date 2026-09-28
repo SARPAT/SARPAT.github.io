@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html><head>
+
+
+
+
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>One sort rule, two victims</title><meta name="description" content="A program-aware scheduler sorts by context size twice: at admission and at eviction. The two sorts hurt opposite ends of the size distribution, and neither shows up in throughput or mean latency."><link rel="canonical" href="https://sarpat.github.io/experiments/thunderagent-churn/"><meta property="og:type" content="article"><meta property="og:url" content="https://sarpat.github.io/experiments/thunderagent-churn/"><meta property="og:title" content="One sort rule, two victims"><meta property="og:description" content="A program-aware scheduler sorts by context size twice: at admission and at eviction. The two sorts hurt opposite ends of the size distribution, and neither shows up in throughput or mean latency."><meta property="og:site_name" content="Saransh Patel"><meta property="og:image" content="https://sarpat.github.io/experiments/thunderagent-churn/og-cover.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="One sort rule, two victims"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="One sort rule, two victims"><meta name="twitter:description" content="A program-aware scheduler sorts by context size twice: at admission and at eviction. The two sorts hurt opposite ends of the size distribution, and neither shows up in throughput or mean latency."><meta name="twitter:image" content="https://sarpat.github.io/experiments/thunderagent-churn/og-cover.png"><meta name="twitter:image:alt" content="One sort rule, two victims"><style>
+    .sc-placeholder{background:color-mix(in srgb,currentColor 8%,transparent);
+      border:1px solid color-mix(in srgb,currentColor 50%,transparent);
+      border-radius:2px;box-sizing:border-box;overflow:hidden}
+    @keyframes sc-shine{0%{background-position:100% 50%}100%{background-position:0% 50%}}
+    html.sc-dc-streaming .sc-placeholder,
+    html.sc-dc-streaming .sc-interp.sc-missing{position:relative;
+      background:color-mix(in srgb,currentColor 5%,transparent);
+      border-color:transparent}
+    html.sc-dc-streaming .sc-placeholder::before,
+    html.sc-dc-streaming .sc-interp.sc-missing::before{content:'';
+      position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(90deg,rgba(217,119,87,0) 25%,rgba(247,225,211,.95) 37%,rgba(217,119,87,0) 63%);
+      background-size:400% 100%;animation:sc-shine 1.4s ease infinite}
+    html.sc-dc-streaming .sc-placeholder:nth-child(n+9 of .sc-placeholder)::before,
+    html.sc-dc-streaming .sc-interp.sc-missing:nth-child(n+9 of .sc-interp.sc-missing)::before{animation:none;
+      background:color-mix(in srgb,currentColor 8%,transparent)}
+    .sc-placeholder-error{padding:4px 8px;font:11px/1.4 ui-monospace,monospace;
+      color:color-mix(in srgb,currentColor 70%,transparent);word-break:break-word}
+    .sc-interp.sc-missing{display:inline-block;width:2em;height:1em;overflow:hidden;
+      vertical-align:text-bottom;background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;color:transparent;
+      user-select:none}
+    .sc-interp.sc-unresolved{font-family:ui-monospace,monospace;font-size:.85em;
+      color:color-mix(in srgb,currentColor 50%,transparent);
+      background:color-mix(in srgb,currentColor 10%,transparent);border-radius:3px;
+      padding:0 3px}
+    .sc-host.sc-has-error{position:relative}
+    .sc-logic-error{position:absolute;top:8px;left:8px;z-index:2147483647;max-width:60ch;
+      padding:6px 10px;background:#b00020;color:#fff;font:12px/1.4 ui-monospace,monospace;
+      border-radius:4px;white-space:pre-wrap;pointer-events:none}
+    /* Mirrors PRINT_BASELINE_CSS in apps/web deck-stage-export.ts — keep both
+       in sync until dc-runtime regains a build step. */
+    @media print {
+      @page { margin: 0.5cm; }
+      figure, table { break-inside: avoid; }
+      #dc-root, #dc-root > .sc-host { height: auto; }
+      *, *::before, *::after {
+        print-color-adjust: exact; -webkit-print-color-adjust: exact;
+        backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        animation-delay: -99s !important; animation-duration: .001s !important;
+        animation-iteration-count: 1 !important; animation-fill-mode: both !important;
+        animation-play-state: running !important; transition-duration: 0s !important;
+      }
+    }
+  </style><style>x-dc{display:none!important}</style><style>html,body{height:100%;margin:0}#dc-root,#dc-root>.sc-host{height:100%}</style><style data-dc-tpl="6">/* cyrillic-ext */
+
+/* cyrillic */
+
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-mono-normal-08949f.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-mono-normal-01d285.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-mono-normal-0d1f0b.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: italic;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-italic-1bc10b.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: italic;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-italic-6de912.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-normal-6ab818.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-normal-e7c9c2.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-normal-6ab818.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-sans-normal-e7c9c2.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Serif';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-serif-normal-677082.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+
+/* cyrillic */
+
+/* vietnamese */
+
+/* latin-ext */
+
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Serif';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/ibm-plex-serif-normal-e279e4.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style><style data-dc-tpl="7">
+:root{
+  --bg:#ffffff;
+  --text:#1f2733;
+  --heading:#0d1117;
+  --muted:#6b7280;
+  --link:#1d4ed8;
+  --accent:#b45309;
+  --rule:#e5e7eb;
+  --surface:#f6f7f9;
+  --note-bg:#eef4fb;
+  --note-border:#4a7fb5;
+  --tip-bg:#fdf6e8;
+  --tip-border:#c08a2e;
+  --large:#1d4ed8;
+  --small:#b45309;
+  --pm:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --psans:"IBM Plex Sans",system-ui,sans-serif;
+  --pserif:"IBM Plex Serif",Georgia,serif;
+  --r-ink:#14161a;
+  --r-text:#2d323a;
+  --r-muted:#5d646e;
+  --r-faint:#6b727c;
+  --r-rule:#e2e5e9;
+  --r-rule2:#dfe2e6;
+  --r-link:#1a49c9;
+  --r-surface:#f6f7f8;
+  --r-surface2:#eceef1;
+  --r-grey:#b0b6bf;
+  --r-rust:#b0432a;
+  --r-rust2:#c06a50;
+  --r-rust3:#cd8a75;
+  --r-rust4:#d9a08f;
+  --r-rust-bg:#fbf1ed;
+  --mono:ui-monospace,SFMono-Regular,"JetBrains Mono","IBM Plex Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:17px;line-height:1.75;-webkit-font-smoothing:antialiased}
+h1,h2,h3{color:var(--heading);font-weight:700;margin:0}
+h1{font-size:36px;line-height:1.25;margin:0 0 .8rem;letter-spacing:-.01em}
+h2{font-size:25px;line-height:1.3;margin:3.5rem 0 1.25rem;scroll-margin-top:1.5rem}
+h3{font-size:19.5px;line-height:1.35;margin:2.5rem 0 .8rem;scroll-margin-top:1.5rem}
+p{margin:0 0 1.35em}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+strong{color:var(--heading);font-weight:700}
+code{font-family:var(--mono);font-size:.92em;background:var(--surface);padding:1px 4px;border-radius:2px}
+pre{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:1rem;font-size:14px;line-height:1.6;overflow-x:auto;margin:1.75rem 0}
+pre code{background:none;padding:0;font-size:inherit}
+figure{margin:2.75rem 0}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:13.5px;line-height:1.5;color:var(--muted);margin-top:.9rem}
+table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.55}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:700;color:var(--heading);border-bottom:2px solid #d6d9de}
+ul,ol{margin:0 0 1.35em;padding-left:1.7em}
+li{margin-bottom:.5rem;line-height:1.7}
+sup{line-height:0}
+sup a{color:var(--accent);font-size:11.5px;text-decoration:none}
+sup a:hover{text-decoration:underline}
+@media (min-width:1400px){figure{margin-inline:-100px}}
+@media (max-width:600px){
+  body{font-size:15.5px}
+  h1{font-size:27px}
+  h2{font-size:21px}
+  h3{font-size:18px}
+  pre{font-size:13px}
+}
+</style></head>
+<body>
+<div id="dc-root"><div class="sc-host" data-sc-name="bundle"><article data-dc-tpl="8" style="width: min(760px, 100% - 2.5rem); margin: 0px auto; padding: 3.5rem 0px 6rem;">
+
+  <a data-dc-tpl="9" href="/experiments.html" style="display: inline-block; font-size: 13px; color: var(--muted); margin-bottom: 2rem;">← Back to Experiments/Research</a>
+
+  <h1 data-dc-tpl="11" style="color: rgb(20, 22, 26); margin: 0px 0px 0.6rem; font-size: clamp(30px, 5vw, 42px); line-height: 1.1; font-family: &quot;IBM Plex Serif&quot;, Georgia, serif; letter-spacing: -0.01em; max-width: 560px;">Two Scheduling Decisions, One Rule</h1>
+  <p data-dc-tpl="12" style="font-size: 20px; line-height: 1.45; color: var(--muted); margin: 0px 0px 1.1rem;">A program-aware scheduler sorts by context size twice: at admission and at eviction. The two sorts hurt opposite ends of the size distribution, and neither shows up in throughput or mean latency.</p>
+  <p data-dc-tpl="13" style="font-size: 13px; color: var(--muted); margin: 0px 0px 2.6rem;"><span class="sc-interp">15 September 2026</span></p>
+
+  <p data-dc-tpl="14">ThunderAgent is a program-aware scheduler for agentic LLM inference (ICML 2026 Spotlight). It schedules whole agent trajectories, called <strong data-dc-tpl="15">programs</strong>, instead of single calls. It already ships as the rollout gateway in SkyRL and inside NVIDIA Dynamo.</p>
+  <p data-dc-tpl="16">I went looking for eviction churn and found something narrower: <strong data-dc-tpl="17">one sort rule, applied at two decision points, harming opposite populations.</strong> Throughput is fine. Mean latency is fine. One group waits 447 seconds to start.</p>
+
+  
+  <ol data-dc-tpl="19" style="margin: 2rem 0px 1rem; padding-left: 1.7em;">
+    <li data-dc-tpl="20"><a data-dc-tpl="21" href="#the-short-report" style="color: var(--accent);">The short report</a>. The four-page brief. Six minutes, every number linked.</li>
+    <li data-dc-tpl="22"><a data-dc-tpl="23" href="#the-setup" style="color: var(--accent);">The setup</a>. Why RL rollouts care about makespan, not mean latency.</li>
+    <li data-dc-tpl="24"><a data-dc-tpl="25" href="#eviction-is-smallest-first" style="color: var(--accent);">Eviction is smallest-first</a>. 40 of 40 decisions picked the smallest eligible program.</li>
+    <li data-dc-tpl="26"><a data-dc-tpl="27" href="#the-confound-controlled" style="color: var(--accent);">The confound, controlled</a>. Short programs are not just eligible more often.</li>
+    <li data-dc-tpl="28"><a data-dc-tpl="29" href="#admission-is-smallest-first-too" style="color: var(--accent);">Admission is smallest-first too</a>. The same sort, one decision earlier.</li>
+    <li data-dc-tpl="30"><a data-dc-tpl="31" href="#the-trap" style="color: var(--accent);">The trap</a>. A correlation saying bigger contexts run faster.</li>
+    <li data-dc-tpl="32"><a data-dc-tpl="33" href="#intervention-a-admission-order" style="color: var(--accent);">Intervention A, admission order</a>. FIFO wins makespan in every seed.</li>
+    <li data-dc-tpl="34"><a data-dc-tpl="35" href="#intervention-b-fatigue-aware-eviction" style="color: var(--accent);">Intervention B, fatigue-aware eviction</a>. Worst-case protection, not a speedup.</li>
+    <li data-dc-tpl="36"><a data-dc-tpl="37" href="#limits" style="color: var(--accent);">Limits</a>. What is a source fact and what is scale-dependent.</li>
+  </ol>
+  
+
+  <div data-dc-tpl="38" style="display: flex; flex-direction: column; gap: 1rem; margin: 2rem 0px 0px;">
+    <img data-dc-tpl="39" src="assets/fig-1.png" alt="vllm serve Qwen/Qwen3-0.6B terminal output" style="display: block; width: 100%; height: auto;">
+    <img data-dc-tpl="40" src="assets/fig-2.png" alt="nvidia-smi output showing one NVIDIA L4" style="display: block; width: 100%; height: auto;">
+  </div>
+
+  <div data-dc-tpl="41" id="the-short-report" style="width: min(940px, -1.5rem + 100vw); position: relative; left: 50%; transform: translateX(-50%); margin: 3rem 0px 1rem; scroll-margin-top: 1.5rem;">
+
+  <section data-dc-tpl="42" data-screen-label="Report p1" style="background: rgb(255, 255, 255); border: 1px solid var(--r-rule); box-shadow: rgba(20, 22, 26, 0.05) 0px 1px 3px; padding: clamp(1.4rem, 5vw, 3rem); margin: 0px 0px 1.5rem; font-family: var(--psans); color: var(--r-text); font-size: 15px; line-height: 1.65;">
+
+    <div data-dc-tpl="43" style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; border-top: 2px solid var(--r-ink); padding-top: 10px; margin-bottom: 1.6rem;">
+      <span data-dc-tpl="44" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">External measurement brief</span>
+      <span data-dc-tpl="45" style="font-family: var(--pm); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-faint);">Four pages · six minutes</span>
+    </div>
+    
+    <div data-dc-tpl="46" style="font-family: var(--pserif); font-weight: 500; font-size: clamp(20px, 3.2vw, 27px); line-height: 1.25; color: var(--r-muted); margin: 0px 0px 1rem; max-width: 480px;">What smallest-first ordering costs at the edges</div>
+    <div data-dc-tpl="47" style="font-style: italic; font-size: 15.5px; color: var(--r-faint); margin: 0px 0px 1.4rem;">An external measurement of ThunderAgent's admission and eviction paths</div>
+    <div data-dc-tpl="48" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 0.8rem 2rem; border-top: 1px solid var(--r-rule); border-bottom: 1px solid var(--r-rule); padding: 14px 0px; margin: 0px 0px 1.6rem;">
+      <div data-dc-tpl="49"><div data-dc-tpl="50" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Repository</div><div data-dc-tpl="51" style="font-family: var(--pm); font-size: 12.5px;"><a data-dc-tpl="52" href="https://github.com/SARPAT/thunderagent-churn-study" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">github.com/SARPAT/thunderagent-churn-study</a></div></div>
+      <div data-dc-tpl="53"><div data-dc-tpl="54" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Pinned commit</div><div data-dc-tpl="55" style="font-family: var(--pm); font-size: 12px; color: var(--r-ink); word-break: break-all;">57ba070ae6e794931c5451c8ccf5cf16100f964b</div></div>
+    </div>
+    <p data-dc-tpl="56" style="font-size: 16px; line-height: 1.75; margin: 0px 0px 2.4rem; max-width: 720px;">ThunderAgent optimizes every scheduling decision by instantaneous token count. That is correct for the objective it targets, and the eviction side is proven optimal in <a data-dc-tpl="57" href="https://arxiv.org/html/2602.13692" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">Lemma 4.1</a> of the paper. <strong data-dc-tpl="58" style="color: var(--r-ink); font-weight: 600;">This brief is not about that.</strong> It is about a second place the same ordering rule applies — admission of new programs — where it produces something the paper's own Appendix E argument (program-level latency matters more than per-step latency) would predict should not happen.</p>
+    <div data-dc-tpl="59" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="60" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">The headline number</span><span data-dc-tpl="61" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint);">Burst arrival · three seeds</span></div>
+    <div data-dc-tpl="62" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 2rem 2.5rem;">
+      <div data-dc-tpl="63">
+        <p data-dc-tpl="64" style="font-size: 14.5px; color: var(--r-muted); margin: 0px 0px 1.2rem;">Under burst arrival, a program's wait for its <strong data-dc-tpl="65" style="color: var(--r-ink); font-weight: 600;">first response</strong> scales almost linearly with its prompt size.</p>
+        <div data-dc-tpl="66" style="display: grid; grid-template-columns: 62px 1fr 64px; gap: 14px; padding-bottom: 6px; border-bottom: 1px solid var(--r-ink);"><span data-dc-tpl="67" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Start tok</span><span data-dc-tpl="68" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Time to first response</span><span data-dc-tpl="69" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); text-align: right;">Seconds</span></div>
+          <div data-dc-tpl="70" style="display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 14px; padding: 11px 0px; border-bottom: 1px solid var(--r-rule);">
+            <span data-dc-tpl="71" style="font-family: var(--pm); font-size: 13px; color: var(--r-muted);">1,444</span>
+            <span data-dc-tpl="72" style="display: block; height: 8px; background: var(--r-surface2);"><span data-dc-tpl="73" style="display: block; height: 8px; width: 0.6%; background: var(--r-grey);"></span></span>
+            <span data-dc-tpl="74" style="font-family: var(--pm); font-size: 15px; font-weight: 600; text-align: right; color: var(--r-ink);">0.5</span>
+          </div>
+          <div data-dc-tpl="75" style="display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 14px; padding: 11px 0px; border-bottom: 1px solid var(--r-rule);">
+            <span data-dc-tpl="76" style="font-family: var(--pm); font-size: 13px; color: var(--r-muted);">3,477</span>
+            <span data-dc-tpl="77" style="display: block; height: 8px; background: var(--r-surface2);"><span data-dc-tpl="78" style="display: block; height: 8px; width: 25.7%; background: var(--r-rust4);"></span></span>
+            <span data-dc-tpl="79" style="font-family: var(--pm); font-size: 15px; font-weight: 600; text-align: right; color: var(--r-ink);">103.9</span>
+          </div>
+          <div data-dc-tpl="80" style="display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 14px; padding: 11px 0px; border-bottom: 1px solid var(--r-rule);">
+            <span data-dc-tpl="81" style="font-family: var(--pm); font-size: 13px; color: var(--r-muted);">5,186</span>
+            <span data-dc-tpl="82" style="display: block; height: 8px; background: var(--r-surface2);"><span data-dc-tpl="83" style="display: block; height: 8px; width: 35.2%; background: var(--r-rust3);"></span></span>
+            <span data-dc-tpl="84" style="font-family: var(--pm); font-size: 15px; font-weight: 600; text-align: right; color: var(--r-ink);">142.4</span>
+          </div>
+          <div data-dc-tpl="85" style="display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 14px; padding: 11px 0px; border-bottom: 1px solid var(--r-rule);">
+            <span data-dc-tpl="86" style="font-family: var(--pm); font-size: 13px; color: var(--r-muted);">7,092</span>
+            <span data-dc-tpl="87" style="display: block; height: 8px; background: var(--r-surface2);"><span data-dc-tpl="88" style="display: block; height: 8px; width: 74.9%; background: var(--r-rust2);"></span></span>
+            <span data-dc-tpl="89" style="font-family: var(--pm); font-size: 15px; font-weight: 600; text-align: right; color: var(--r-ink);">303.0</span>
+          </div>
+          <div data-dc-tpl="90" style="display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 14px; padding: 11px 0px; border-bottom: 1px solid var(--r-ink);">
+            <span data-dc-tpl="91" style="font-family: var(--pm); font-size: 13px; color: var(--r-muted);">8,046</span>
+            <span data-dc-tpl="92" style="display: block; height: 8px; background: var(--r-surface2);"><span data-dc-tpl="93" style="display: block; height: 8px; width: 100%; background: var(--r-rust);"></span></span>
+            <span data-dc-tpl="94" style="font-family: var(--pm); font-size: 15px; font-weight: 600; text-align: right; color: var(--r-rust);">404.4</span>
+          </div>
+        <div data-dc-tpl="95" style="font-family: var(--pm); font-size: 11px; color: var(--r-faint); margin-top: 10px;">Source: <a data-dc-tpl="96" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/results/grpo102.json" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">results/grpo102.json</a></div>
+      </div>
+      <div data-dc-tpl="97">
+        <div data-dc-tpl="98" style="font-family: var(--pm); font-size: 11.5px; color: var(--r-ink);">corr(prompt size, first-response latency)</div>
+        <div data-dc-tpl="99" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); margin: 2px 0px 10px;">Across three seeds</div>
+        <div data-dc-tpl="100" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;"><a data-dc-tpl="101" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/results/grpo_run.json" style="display: flex; flex-direction: column; align-items: center; gap: 4px; border: 1px solid var(--r-rule2); padding: 12px 6px 10px; text-decoration: none; color: var(--r-ink);"><span data-dc-tpl="102" style="font-family: var(--pm); font-size: 21px; font-weight: 600;">+0.855</span><span data-dc-tpl="103" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Seed 100</span></a><a data-dc-tpl="104" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/results/grpo101.json" style="display: flex; flex-direction: column; align-items: center; gap: 4px; border: 1px solid var(--r-rule2); padding: 12px 6px 10px; text-decoration: none; color: var(--r-ink);"><span data-dc-tpl="105" style="font-family: var(--pm); font-size: 21px; font-weight: 600;">+0.745</span><span data-dc-tpl="106" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Seed 101</span></a><a data-dc-tpl="107" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/results/grpo102.json" style="display: flex; flex-direction: column; align-items: center; gap: 4px; border: 1px solid var(--r-rule2); padding: 12px 6px 10px; text-decoration: none; color: var(--r-ink);"><span data-dc-tpl="108" style="font-family: var(--pm); font-size: 21px; font-weight: 600;">+0.870</span><span data-dc-tpl="109" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Seed 102</span></a></div>
+        <div data-dc-tpl="110" style="font-family: var(--pm); font-size: 11px; color: var(--r-faint); margin: 10px 0px 1.4rem;">Computed by <a data-dc-tpl="111" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/analysis/admission_check.py#L22-L31" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">admission_check.py</a> L22–31</div>
+        <div data-dc-tpl="112" style="background: var(--r-surface); border-left: 3px solid var(--r-ink); padding: 14px 18px; font-size: 15px; line-height: 1.6;">
+          <p data-dc-tpl="113" style="margin: 0px 0px 12px; padding-bottom: 12px; border-bottom: 1px solid var(--r-rule);">About <strong data-dc-tpl="114" style="color: var(--r-ink); font-weight: 600;">75% of programs waited over 20 seconds just to start</strong> — <a data-dc-tpl="115" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/analysis/step0_check.py#L23-L27" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">48/64, 51/64, 47/64</a>.</p>
+          <p data-dc-tpl="116" style="margin: 0px;">Every step after the first averaged <strong data-dc-tpl="117" style="color: var(--r-ink); font-weight: 600;">0.6 s</strong>. This is purely a first-request effect.</p>
+        </div>
+      </div>
+    </div>
+    <div data-dc-tpl="118" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; border-top: 1px solid var(--r-rule); padding-top: 12px; margin-top: 2.5rem;">
+      <span data-dc-tpl="119" style="font-family: var(--pm); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Smallest-first ordering · Admission &amp; eviction</span>
+      <span data-dc-tpl="120" style="font-family: var(--pm); font-size: 10.5px; letter-spacing: 0.14em; color: var(--r-faint); white-space: nowrap;">1 / 4</span>
+    </div>
+  </section>
+
+  <section data-dc-tpl="121" data-screen-label="Report p2" style="background: rgb(255, 255, 255); border: 1px solid var(--r-rule); box-shadow: rgba(20, 22, 26, 0.05) 0px 1px 3px; padding: clamp(1.4rem, 5vw, 3rem); margin: 0px 0px 1.5rem; font-family: var(--psans); color: var(--r-text); font-size: 15px; line-height: 1.65;">
+
+    <div data-dc-tpl="122" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 2rem 3rem;">
+      <div data-dc-tpl="123">
+        <div data-dc-tpl="124" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="125" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">Where it comes from</span></div>
+        <p data-dc-tpl="126">In <a data-dc-tpl="127" href="https://github.com/ThunderAgent-org/ThunderAgent/blob/7ddc8610270e56d3b109eed8796b3a4360fc67c9/ThunderAgent/scheduler/router.py#L846" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;"><span data-dc-tpl="128" style="font-family: var(--pm); font-size: 0.88em;">_resume_paused_programs</span></a>, every waiting program is sorted globally, smallest tokens first, <strong data-dc-tpl="129" style="color: var(--r-ink); font-weight: 600;">before</strong> being split into priority groups:</p>
+        <pre data-dc-tpl="130" style="background: var(--r-ink); color: rgb(232, 234, 237); border: 0px; border-radius: 0px; padding: 16px 18px; margin: 0px 0px 1.2rem; font-family: var(--pm); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;"><code data-dc-tpl="131" style="background: none; padding: 0px; font-family: var(--pm);">paused_programs = self._get_paused_programs_sorted(<span data-dc-tpl="132" style="color: rgb(227, 165, 133);">ascending</span>=<span data-dc-tpl="133" style="color: rgb(143, 173, 245);">True</span>)</code></pre>
+        <p data-dc-tpl="134">Since <code data-dc-tpl="135" style="font-family: var(--pm); font-size: 0.88em; background: var(--r-surface2); padding: 1px 5px; border-radius: 2px; color: var(--r-ink);">new_program_group</code> inherits that ordering, brand-new programs are admitted smallest-first, identical to how running programs are evicted smallest-first. Under a burst of simultaneous arrivals, large-prompt programs land at the back of the queue and stay there.</p>
+        <div data-dc-tpl="136" style="border-left: 2px solid var(--r-rule2); padding: 4px 0px 4px 16px; margin: 0px 0px 2.2rem;">
+          <div data-dc-tpl="137" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Source of the ordering</div>
+          <div data-dc-tpl="138" style="font-size: 14px;"><a data-dc-tpl="139" href="https://github.com/ThunderAgent-org/ThunderAgent/blob/7ddc8610270e56d3b109eed8796b3a4360fc67c9/ThunderAgent/scheduler/router.py#L846" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px; font-family: var(--pm); font-size: 13px;">scheduler/router.py#L846</a> — commit <span data-dc-tpl="140" style="font-family: var(--pm); font-size: 13px; color: var(--r-ink);">7ddc861</span>.</div>
+        </div>
+        <div data-dc-tpl="141" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="142" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">Why this matters specifically for you</span></div>
+        <div data-dc-tpl="143" style="display: grid; grid-template-columns: 34px 1fr; gap: 4px; margin: 0px 0px 1.1rem;"><span data-dc-tpl="144" style="font-family: var(--pm); font-size: 12px; font-weight: 600; color: var(--r-rust); padding-top: 3px;">01</span><div data-dc-tpl="145"><strong data-dc-tpl="146" style="color: var(--r-ink); font-weight: 600;">Burst arrival is not a synthetic artifact.</strong> It is the normal shape of RL rollout launch: every trajectory in a batch fires at the start of a training step.</div></div>
+        <div data-dc-tpl="147" style="display: grid; grid-template-columns: 34px 1fr; gap: 4px; margin: 0px 0px 1.1rem;"><span data-dc-tpl="148" style="font-family: var(--pm); font-size: 12px; font-weight: 600; color: var(--r-rust); padding-top: 3px;">02</span><div data-dc-tpl="149">ThunderAgent is already the rollout gateway in <a data-dc-tpl="150" href="https://github.com/ThunderAgent-org/ThunderAgent" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">SkyRL</a> (SWE Agent rollout 3× faster on 40 H100s, PR #1645) and integrated into <a data-dc-tpl="151" href="https://github.com/ThunderAgent-org/ThunderAgent" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">NVIDIA Dynamo</a> (PR #9448; program abstraction as a first-class scheduling unit, PR #8789).</div></div>
+        <div data-dc-tpl="152" style="display: grid; grid-template-columns: 34px 1fr; gap: 4px; margin: 0px 0px 1.1rem;"><span data-dc-tpl="153" style="font-family: var(--pm); font-size: 12px; font-weight: 600; color: var(--r-rust); padding-top: 3px;">03</span><div data-dc-tpl="154">In GRPO-style training, a group of rollouts sharing one prompt must <strong data-dc-tpl="155" style="color: var(--r-ink); font-weight: 600;">all</strong> finish before advantages compute. Group members share a prompt, so they share similar token counts — the ordering does not spread across a group, it targets <strong data-dc-tpl="156" style="color: var(--r-ink); font-weight: 600;">whole groups</strong> at once.</div></div>
+      </div>
+      <div data-dc-tpl="157">
+        <div data-dc-tpl="158" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="159" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">The clearest illustration</span></div>
+        <p data-dc-tpl="160">Two groups, same run, same 43,216-token capacity.</p>
+        <div data-dc-tpl="161" style="display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-top: 1.2rem;"><span data-dc-tpl="162"><strong data-dc-tpl="163" style="color: var(--r-ink); font-weight: 600;">Small-prompt group</strong> <span data-dc-tpl="164" style="font-family: var(--pm); font-size: 11.5px; color: var(--r-faint);">1,504 tok</span></span><span data-dc-tpl="165" style="font-family: var(--pm); font-size: 15px; font-weight: 600; color: var(--r-ink);">104.6 s</span></div>
+        <div data-dc-tpl="166" style="display: flex; height: 26px; background: var(--r-surface2); margin: 6px 0px;"><span data-dc-tpl="167" style="display: block; height: 26px; width: 0.39%; background: var(--r-rust);"></span><span data-dc-tpl="168" style="display: block; height: 26px; width: 19.79%; background: var(--r-ink);"></span></div>
+        <div data-dc-tpl="169" style="font-family: var(--pm); font-size: 11.5px; color: var(--r-faint);">admit <b data-dc-tpl="170" style="color: var(--r-rust);">2.0 s</b> · execute <b data-dc-tpl="171" style="color: var(--r-ink);">102.6 s</b></div>
+        <div data-dc-tpl="172" style="display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-top: 1.3rem;"><span data-dc-tpl="173"><strong data-dc-tpl="174" style="color: var(--r-ink); font-weight: 600;">Large-prompt group</strong> <span data-dc-tpl="175" style="font-family: var(--pm); font-size: 11.5px; color: var(--r-faint);">8,120 tok</span></span><span data-dc-tpl="176" style="font-family: var(--pm); font-size: 15px; font-weight: 600; color: var(--r-rust);">518.5 s</span></div>
+        <div data-dc-tpl="177" style="display: flex; height: 26px; background: var(--r-surface2); margin: 6px 0px;"><span data-dc-tpl="178" style="display: block; height: 26px; width: 86.25%; background: var(--r-rust);"></span><span data-dc-tpl="179" style="display: block; height: 26px; width: 13.75%; background: var(--r-ink);"></span></div>
+        <div data-dc-tpl="180" style="font-family: var(--pm); font-size: 11.5px; color: var(--r-faint);">admit <b data-dc-tpl="181" style="color: var(--r-rust);">447.2 s</b> · execute <b data-dc-tpl="182" style="color: var(--r-ink);">71.4 s</b></div>
+        <div data-dc-tpl="183" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint); margin: 10px 0px 1.2rem;">Bars to scale · <a data-dc-tpl="184" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/results/grpo_run.json" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">seed 100 data</a> · <a data-dc-tpl="185" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/analysis/separate_effects.py#L76-L85" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">phase-split analysis</a></div>
+        <p data-dc-tpl="186">The small group gets in almost instantly and pays on the back end. The large group is never touched once running, and pays entirely on the front end — <strong data-dc-tpl="187" style="color: var(--r-ink); font-weight: 600;">nearly 5× longer overall</strong>.</p>
+        <div data-dc-tpl="188" style="background: var(--r-surface); padding: 14px 16px; margin: 0px 0px 1.8rem; font-size: 14.5px;">corr(group size, evictions on that group) across three seeds: <span data-dc-tpl="189" style="font-family: var(--pm); font-weight: 600; color: var(--r-ink);">−0.840 · −0.841 · −0.900</span><div data-dc-tpl="190" style="margin-top: 4px;"><a data-dc-tpl="191" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/analysis/grpo_analysis.py" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px; font-family: var(--pm); font-size: 12px;">grpo_analysis.py</a></div></div>
+        <p data-dc-tpl="192" style="margin: 0px 0px 0.8rem;"><strong data-dc-tpl="193" style="color: var(--r-ink); font-weight: 600;">The two effects are statistically independent — each drives its own phase.</strong></p>
+        <div data-dc-tpl="194" style="overflow-x: auto;">
+        <table data-dc-tpl="195" style="width: 100%; border-collapse: collapse; font-size: 14px; margin: 0px 0px 0.9rem;">
+          <thead data-dc-tpl="196"><tr data-dc-tpl="197"><th data-dc-tpl="198" style="border-bottom: 1px solid var(--r-ink); padding: 6px 4px;"></th><th data-dc-tpl="199" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); text-align: right; font-weight: 400; border-bottom: 1px solid var(--r-ink); padding: 6px 4px;">Admission wait</th><th data-dc-tpl="200" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); text-align: right; font-weight: 400; border-bottom: 1px solid var(--r-ink); padding: 6px 4px;">Execution time</th></tr></thead>
+          <tbody data-dc-tpl="201">
+            <tr data-dc-tpl="202"><td data-dc-tpl="203" style="padding: 10px 4px; border-bottom: 1px solid var(--r-rule);">Prompt size</td><td data-dc-tpl="204" style="font-family: var(--pm); text-align: right; font-weight: 600; color: var(--r-rust); padding: 10px 4px; border-bottom: 1px solid var(--r-rule);">+0.82</td><td data-dc-tpl="205" style="font-family: var(--pm); text-align: right; color: var(--r-muted); padding: 10px 4px; border-bottom: 1px solid var(--r-rule);">−0.43</td></tr>
+            <tr data-dc-tpl="206"><td data-dc-tpl="207" style="padding: 10px 4px; border-bottom: 1px solid var(--r-ink);">Eviction count</td><td data-dc-tpl="208" style="font-family: var(--pm); text-align: right; color: var(--r-muted); padding: 10px 4px; border-bottom: 1px solid var(--r-ink);">−0.34</td><td data-dc-tpl="209" style="font-family: var(--pm); text-align: right; font-weight: 600; color: var(--r-rust); padding: 10px 4px; border-bottom: 1px solid var(--r-ink);">+0.69</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p data-dc-tpl="210" style="font-size: 13.5px; line-height: 1.6; color: var(--r-muted); margin: 0px;">The negative size-vs-execution number initially looked odd — bigger prompts should execute slower, not faster. <a data-dc-tpl="211" href="https://github.com/SARPAT/thunderagent-churn-study/blob/57ba070ae6e794931c5451c8ccf5cf16100f964b/analysis/why_faster.py#L96-L103" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">Partial-correlation testing</a> shows it collapses from −0.43 to <strong data-dc-tpl="212" style="color: var(--r-ink); font-weight: 600;">−0.13</strong> once eviction count is held fixed. Large programs execute faster only because they are essentially never evicted — not because size itself helps.</p>
+      </div>
+    </div>
+    <div data-dc-tpl="213" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; border-top: 1px solid var(--r-rule); padding-top: 12px; margin-top: 2.5rem;">
+      <span data-dc-tpl="214" style="font-family: var(--pm); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint);">Mechanism · Consequence</span>
+      <span data-dc-tpl="215" style="font-family: var(--pm); font-size: 10.5px; letter-spacing: 0.14em; color: var(--r-faint); white-space: nowrap;">2 / 4</span>
+    </div>
+  </section>
+
+  <section data-dc-tpl="216" data-screen-label="Report p3" style="background: rgb(255, 255, 255); border: 1px solid var(--r-rule); box-shadow: rgba(20, 22, 26, 0.05) 0px 1px 3px; padding: clamp(1.4rem, 5vw, 3rem); margin: 0px 0px 1.5rem; font-family: var(--psans); color: var(--r-text); font-size: 15px; line-height: 1.65;">
+
+    <div data-dc-tpl="217" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="218" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">Scope and setup</span><span data-dc-tpl="219" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint);">Read before the numbers travel</span></div>
+    <div data-dc-tpl="220" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); border-top: 1px solid var(--r-rule2); border-left: 1px solid var(--r-rule2); margin: 0px 0px 1.2rem;">
+      <div data-dc-tpl="221" style="padding: 14px 16px; border-right: 1px solid var(--r-rule2); border-bottom: 1px solid var(--r-rule2);"><div data-dc-tpl="222" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); margin-bottom: 6px;">Hardware &amp; stack</div><div data-dc-tpl="223" style="font-size: 14px; line-height: 1.55; color: var(--r-ink);">1× NVIDIA L4 (23 GB)<br data-dc-tpl="224">vLLM 0.27.1 · Qwen3-0.6B<br data-dc-tpl="225">single backend</div></div>
+      <div data-dc-tpl="226" style="padding: 14px 16px; border-right: 1px solid var(--r-rule2); border-bottom: 1px solid var(--r-rule2);"><div data-dc-tpl="227" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); margin-bottom: 6px;">Capacity</div><div data-dc-tpl="228" style="font-size: 14px; line-height: 1.55; color: var(--r-ink);">KV cache 43,216 tok<br data-dc-tpl="229">contexts 1,500–8,000 tok</div></div>
+      <div data-dc-tpl="230" style="padding: 14px 16px; border-right: 1px solid var(--r-rule2); border-bottom: 1px solid var(--r-rule2);"><div data-dc-tpl="231" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); margin-bottom: 6px;">Method</div><div data-dc-tpl="232" style="font-size: 14px; line-height: 1.55; color: var(--r-ink);">3 seeds throughout<br data-dc-tpl="233">synthetic agent workload driving the real, unmodified scheduler via <code data-dc-tpl="234" style="font-family: var(--pm); font-size: 0.88em; background: var(--r-surface2); padding: 1px 5px; border-radius: 2px; color: var(--r-ink);">program_id</code></div></div>
+    </div>
+    <div data-dc-tpl="235" style="background: var(--r-rust-bg); border-left: 3px solid var(--r-rust); padding: 14px 18px; margin: 0px 0px 1.2rem;">
+      <div data-dc-tpl="236" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-rust); margin-bottom: 4px;">Scale caveat</div>
+      <p data-dc-tpl="237" style="margin: 0px; font-size: 14.5px;">This is far smaller than your 8× H100 evaluations. The ordering mechanism is confirmed directly in source, so it will hold at any scale — but the absolute wait times (up to 447 s here) will differ at production scale and <strong data-dc-tpl="238" style="color: var(--r-ink); font-weight: 600;">should not be read as production numbers.</strong></p>
+    </div>
+    <a data-dc-tpl="239" href="https://github.com/SARPAT/thunderagent-churn-study" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem 1rem; background: var(--r-ink); padding: 14px 18px; margin: 0px 0px 2.6rem; text-decoration: none;"><span data-dc-tpl="240" style="font-family: var(--pm); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: rgb(176, 182, 191);">Full setup, logs, every script</span><span data-dc-tpl="241" style="font-family: var(--pm); font-size: 13px; font-weight: 600; color: rgb(255, 255, 255);">github.com/SARPAT/thunderagent-churn-study</span></a>
+    <div data-dc-tpl="242" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="243" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">The one open question</span></div>
+    <div data-dc-tpl="244" style="font-family: var(--pserif); font-weight: 600; font-size: clamp(22px, 3.4vw, 29px); line-height: 1.28; color: var(--r-ink); margin: 0.4rem 0px 1rem;">Is smallest-first admission for brand-new programs a deliberate choice, or a side effect of <span data-dc-tpl="245" style="font-family: var(--pm); font-weight: 500; font-size: 0.78em;">new_program_group</span> reusing the same sort used for resuming previously-paused programs?</div>
+    <p data-dc-tpl="246" style="margin: 0px 0px 2.4rem;">If deliberate, the tradeoff — maximize concurrent programs per unit of KV cache, at the cost of large-prompt TTFT under burst load — is a reasonable one. It just seemed worth surfacing given where the system is now deployed.</p>
+    <div data-dc-tpl="247" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 2rem 2.5rem; border-top: 1px solid var(--r-rule); padding-top: 1.4rem;">
+      <p data-dc-tpl="248" style="margin: 0px;"><strong data-dc-tpl="249" style="color: var(--r-ink); font-weight: 600;">Nothing here contradicts the paper.</strong> The eviction policy does exactly what <a data-dc-tpl="250" href="https://arxiv.org/html/2602.13692" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">Lemma 4.1</a> says it should.</p>
+      <p data-dc-tpl="251" style="margin: 0px;">The admission path applies the same logic to a different decision, under conditions — burst arrival, grouped rollouts — the original eviction analysis did not model. <strong data-dc-tpl="252" style="color: var(--r-ink); font-weight: 600;">That combination is the entire finding.</strong></p>
+    </div>
+    <div data-dc-tpl="253" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; border-top: 1px solid var(--r-rule); padding-top: 12px; margin-top: 2.5rem;">
+      <span data-dc-tpl="254" style="font-size: 12px; line-height: 1.55; color: var(--r-muted); max-width: 620px;">Full raw data, all analysis scripts, and every log referenced above are in the linked repository, including three independent replications of every number cited here.</span>
+      <span data-dc-tpl="255" style="font-family: var(--pm); font-size: 10.5px; letter-spacing: 0.14em; color: var(--r-faint); white-space: nowrap;">3 / 4</span>
+    </div>
+  </section>
+
+  <section data-dc-tpl="256" data-screen-label="Report p4" style="background: rgb(255, 255, 255); border: 1px solid var(--r-rule); box-shadow: rgba(20, 22, 26, 0.05) 0px 1px 3px; padding: clamp(1.4rem, 5vw, 3rem); margin: 0px 0px 1.5rem; font-family: var(--psans); color: var(--r-text); font-size: 15px; line-height: 1.65;">
+
+    <div data-dc-tpl="257" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="258" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">A tested alternative</span><span data-dc-tpl="259" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint);">What we tried · what it cost</span></div>
+    <p data-dc-tpl="260">The bias above raises an obvious question: what would changing it cost? <a data-dc-tpl="261" href="https://github.com/SARPAT/thunderagent-churn-study/blob/main/analysis/compare_admission.py" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">new_program_group's sort was patched behind an environment variable</a>, isolated so eviction and resume ordering stay untouched — three admission orderings, three seeds each, same workload, same eviction path.</p>
+    <div data-dc-tpl="262" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 0.6rem; margin: 0px 0px 2rem;">
+      <div data-dc-tpl="263" style="border: 1px solid var(--r-rule2); padding: 12px 14px;"><div data-dc-tpl="264" style="font-size: 14px;"><strong data-dc-tpl="265" style="color: var(--r-ink); font-weight: 600;">Smallest-first</strong> · <a data-dc-tpl="266" href="https://github.com/ThunderAgent-org/ThunderAgent/blob/7ddc8610270e56d3b109eed8796b3a4360fc67c9/ThunderAgent/scheduler/router.py#L846" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px; font-family: var(--pm); font-size: 12px;">router.py#L846</a></div><div data-dc-tpl="267" style="font-size: 13px; color: var(--r-muted);">Smallest new program first · upstream</div></div>
+      <div data-dc-tpl="268" style="border-top: 2px solid var(--r-rust); border-right-color: rgb(223, 226, 230); border-right-style: solid; border-right-width: 1px; border-bottom-color: rgb(223, 226, 230); border-bottom-style: solid; border-bottom-width: 1px; border-left-color: rgb(223, 226, 230); border-left-style: solid; border-left-width: 1px; border-image-source: none; border-image-slice: 100%; border-image-width: 1; border-image-outset: 0; border-image-repeat: stretch; padding: 12px 14px;"><div data-dc-tpl="269" style="font-size: 14px;"><strong data-dc-tpl="270" style="color: var(--r-ink); font-weight: 600;">FIFO</strong></div><div data-dc-tpl="271" style="font-size: 13px; color: var(--r-muted);">Arrival order, size-blind</div></div>
+      <div data-dc-tpl="272" style="border: 1px solid var(--r-rule2); padding: 12px 14px;"><div data-dc-tpl="273" style="font-size: 14px;"><strong data-dc-tpl="274" style="color: var(--r-ink); font-weight: 600;">Largest-first</strong></div><div data-dc-tpl="275" style="font-size: 13px; color: var(--r-muted);">Largest new program first</div></div>
+    </div>
+    <div data-dc-tpl="276" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="277" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">Results · three seeds per arm</span><span data-dc-tpl="278" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint);"><a data-dc-tpl="279" href="https://github.com/SARPAT/thunderagent-churn-study/blob/main/analysis/compare_admission.py" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">compare_admission.py</a> · <a data-dc-tpl="280" href="https://github.com/SARPAT/thunderagent-churn-study/blob/main/results/admit_fifo_s100.json" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">nine result files</a></span></div>
+    <div data-dc-tpl="281" style="overflow-x: auto; margin: 0px 0px 1.4rem;">
+    <table data-dc-tpl="282" style="width: 100%; min-width: 640px; border-collapse: collapse;">
+      <thead data-dc-tpl="283"><tr data-dc-tpl="284"><th data-dc-tpl="285" style="border-bottom: 1px solid var(--r-ink); padding: 6px 8px;"></th><th data-dc-tpl="286" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); font-weight: 400; text-align: right; border-bottom: 1px solid var(--r-ink); padding: 6px 8px;">Smallest-first</th><th data-dc-tpl="287" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-ink); font-weight: 600; text-align: right; border-bottom: 1px solid var(--r-ink); padding: 6px 8px; background: var(--r-surface);">FIFO</th><th data-dc-tpl="288" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); font-weight: 400; text-align: right; border-bottom: 1px solid var(--r-ink); padding: 6px 8px;">Largest-first</th></tr></thead>
+      <tbody data-dc-tpl="289">
+        <tr data-dc-tpl="290"><td data-dc-tpl="291" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-rule);">corr(size, TTFT)</td><td data-dc-tpl="292" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">+0.855 / +0.747 / +0.868</td><td data-dc-tpl="293" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; background: var(--r-surface); color: var(--r-text);">+0.272 / +0.230 / +0.406</td><td data-dc-tpl="294" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">+0.113 / −0.019 / +0.330</td></tr>
+        <tr data-dc-tpl="295"><td data-dc-tpl="296" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-rule);">Large/small wait ratio</td><td data-dc-tpl="297" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">9.4× / 8.7× / 9.8×</td><td data-dc-tpl="298" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; background: var(--r-surface); color: var(--r-text);">4.8× / 3.9× / 2.6×</td><td data-dc-tpl="299" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">1.3× / 1.6× / 1.6×</td></tr>
+        <tr data-dc-tpl="300"><td data-dc-tpl="301" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); font-weight: 600; color: var(--r-ink);">Makespan</td><td data-dc-tpl="302" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">526 / 512 / 516 s</td><td data-dc-tpl="303" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; background: var(--r-surface); font-weight: 600; color: var(--r-rust);">504 / 495 / 498 s</td><td data-dc-tpl="304" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">489 / 508 / 508 s</td></tr>
+        <tr data-dc-tpl="305"><td data-dc-tpl="306" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); font-weight: 600; color: var(--r-ink);">Worst group completion</td><td data-dc-tpl="307" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">518 / 496 / 503 s</td><td data-dc-tpl="308" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; background: var(--r-surface); font-weight: 600; color: var(--r-rust);">488 / 474 / 480 s</td><td data-dc-tpl="309" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">472 / 491 / 492 s</td></tr>
+        <tr data-dc-tpl="310"><td data-dc-tpl="311" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-rule);">Mean group completion</td><td data-dc-tpl="312" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; font-weight: 600; color: var(--r-ink);">259 / 285 / 272 s</td><td data-dc-tpl="313" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; background: var(--r-surface); color: var(--r-text);">289 / 286 / 300 s</td><td data-dc-tpl="314" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">341 / 367 / 334 s</td></tr>
+        <tr data-dc-tpl="315"><td data-dc-tpl="316" style="font-size: 13.5px; padding: 9px 8px; border-bottom: 1px solid var(--r-ink);">Total evictions (mean)</td><td data-dc-tpl="317" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--r-ink); white-space: nowrap; color: var(--r-muted);">17.7</td><td data-dc-tpl="318" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--r-ink); white-space: nowrap; background: var(--r-surface); color: var(--r-text);">22.3</td><td data-dc-tpl="319" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--r-ink); white-space: nowrap; color: var(--r-muted);">26.0</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div data-dc-tpl="320" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 2rem 2.5rem; margin: 0px 0px 2.4rem; font-size: 14.5px;">
+      <p data-dc-tpl="321" style="margin: 0px;"><strong data-dc-tpl="322" style="color: var(--r-ink); font-weight: 600;">FIFO wins on makespan and worst-group completion in all three seeds</strong> — costing ~20–30 s of mean group completion, and cutting the size-fairness ratio from roughly 9.3× to 3.8×.</p>
+      <p data-dc-tpl="323" style="margin: 0px;"><strong data-dc-tpl="324" style="color: var(--r-ink); font-weight: 600;">Largest-first's seed-100 makespan win (−7.1%) did not replicate</strong> in seeds 101 or 102 (+0.6%, −1.6%). Treat that arm's seed-100 result as noise, not a finding.</p>
+    </div>
+    <div data-dc-tpl="325" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 2rem 3rem; margin: 0px 0px 2rem;">
+      <div data-dc-tpl="326">
+        <div data-dc-tpl="327" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="328" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">Why this pattern shows up</span></div>
+        <p data-dc-tpl="329" style="font-size: 14.5px;">A standard scheduling result: shortest-processing-time ordering minimizes <strong data-dc-tpl="330" style="color: var(--r-ink); font-weight: 600;">mean</strong> flow time — upstream's actual behaviour on that metric — while longest-processing-time ordering minimizes <strong data-dc-tpl="331" style="color: var(--r-ink); font-weight: 600;">makespan</strong>. FIFO lands between the two.</p>
+        <p data-dc-tpl="332" style="font-size: 14.5px; margin: 0px;">That matters for synchronous RL rollouts: a training step is gated on the group that finishes <strong data-dc-tpl="333" style="color: var(--r-ink); font-weight: 600;">last</strong>, not the average one. Mean completion is close to irrelevant there; makespan blocks the next step.</p>
+      </div>
+      <div data-dc-tpl="334">
+        <div data-dc-tpl="335" style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; flex-wrap: wrap; border-top: 1.5px solid var(--r-ink); padding-top: 10px; margin: 0px 0px 16px;"><span data-dc-tpl="336" style="font-family: var(--pm); font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--r-ink);">The eviction follow-up</span><span data-dc-tpl="337" style="font-family: var(--pm); font-size: 10.5px; color: var(--r-faint);"><a data-dc-tpl="338" href="https://github.com/SARPAT/thunderagent-churn-study/blob/main/analysis/why_more_evictions.py" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">why_more_evictions.py</a> · <a data-dc-tpl="339" href="https://github.com/SARPAT/thunderagent-churn-study/blob/main/analysis/burst_check.py" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">burst_check.py</a></span></div>
+        <table data-dc-tpl="340" style="width: 100%; border-collapse: collapse; margin: 0px 0px 1rem;">
+          <thead data-dc-tpl="341"><tr data-dc-tpl="342"><th data-dc-tpl="343" style="border-bottom: 1px solid var(--r-ink); padding: 6px 4px;"></th><th data-dc-tpl="344" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-faint); font-weight: 400; text-align: right; border-bottom: 1px solid var(--r-ink); padding: 6px 4px;">Small-1st</th><th data-dc-tpl="345" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-ink); font-weight: 600; text-align: right; border-bottom: 1px solid var(--r-ink); padding: 6px 4px;">FIFO</th></tr></thead>
+          <tbody data-dc-tpl="346">
+            <tr data-dc-tpl="347"><td data-dc-tpl="348" style="font-size: 13.5px; padding: 8px 4px; border-bottom: 1px solid var(--r-rule);">Max evictions on one program</td><td data-dc-tpl="349" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">3.3</td><td data-dc-tpl="350" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; font-weight: 600; color: var(--r-rust);">2.7</td></tr>
+            <tr data-dc-tpl="351"><td data-dc-tpl="352" style="font-size: 13.5px; padding: 8px 4px; border-bottom: 1px solid var(--r-rule);">Gini (eviction spread)</td><td data-dc-tpl="353" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">0.847</td><td data-dc-tpl="354" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; font-weight: 600; color: var(--r-rust);">0.770</td></tr>
+            <tr data-dc-tpl="355"><td data-dc-tpl="356" style="font-size: 13.5px; padding: 8px 4px; border-bottom: 1px solid var(--r-rule);">Capacity breaches per run</td><td data-dc-tpl="357" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-muted);">15.3</td><td data-dc-tpl="358" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--r-rule); white-space: nowrap; color: var(--r-text);">21.0</td></tr>
+            <tr data-dc-tpl="359"><td data-dc-tpl="360" style="font-size: 13.5px; padding: 8px 4px; border-bottom: 1px solid var(--r-ink);">Evictions per breach</td><td data-dc-tpl="361" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--r-ink); white-space: nowrap; color: var(--r-muted);">1.15</td><td data-dc-tpl="362" style="font-family: var(--pm); font-size: 12.5px; text-align: right; padding: 9px 8px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--r-ink); white-space: nowrap; color: var(--r-text);">1.06</td></tr>
+          </tbody>
+        </table>
+        <p data-dc-tpl="363" style="font-size: 14px; margin: 0px;">FIFO breaches KV capacity more often — a size-mixed resident population oscillates near the limit — but each breach is <strong data-dc-tpl="364" style="color: var(--r-ink); font-weight: 600;">smaller, not larger</strong>, and the extra events don't concentrate. A real but shallow cost.</p>
+      </div>
+    </div>
+    <div data-dc-tpl="365" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 0.6rem;">
+      <div data-dc-tpl="366" style="border-top: 2px solid var(--r-ink); border-right-color: rgb(223, 226, 230); border-right-style: solid; border-right-width: 1px; border-bottom-color: rgb(223, 226, 230); border-bottom-style: solid; border-bottom-width: 1px; border-left-color: rgb(223, 226, 230); border-left-style: solid; border-left-width: 1px; border-image-source: none; border-image-slice: 100%; border-image-width: 1; border-image-outset: 0; border-image-repeat: stretch; padding: 12px 14px;"><div data-dc-tpl="367" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-ink); font-weight: 600; margin-bottom: 6px;">Does claim</div><div data-dc-tpl="368" style="font-size: 13.5px; line-height: 1.55;">Across three seeds, FIFO improves makespan, worst-case group completion and size fairness, at a modest, well-understood cost.</div></div>
+      <div data-dc-tpl="369" style="border: 1px solid var(--r-rule2); padding: 12px 14px;"><div data-dc-tpl="370" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-ink); font-weight: 600; margin-bottom: 6px;">Does not claim</div><div data-dc-tpl="371" style="font-size: 13.5px; line-height: 1.55;">That FIFO is the right default generally — one workload shape: burst arrival, group-structured, single backend.</div></div>
+      <div data-dc-tpl="372" style="border: 1px solid var(--r-rule2); padding: 12px 14px;"><div data-dc-tpl="373" style="font-family: var(--pm); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-ink); font-weight: 600; margin-bottom: 6px;">Does not claim</div><div data-dc-tpl="374" style="font-size: 13.5px; line-height: 1.55;">That the percentages transfer to production scale. The pattern should hold; the seconds came from one L4, 0.6B model.</div></div>
+    </div>
+    <div data-dc-tpl="375" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; border-top: 1px solid var(--r-rule); padding-top: 12px; margin-top: 2.5rem;">
+      <span data-dc-tpl="376" style="font-size: 12px; line-height: 1.55; color: var(--r-muted); max-width: 620px;">The patch tested here is a ~15-line change isolated to one sort call in <code data-dc-tpl="377" style="font-family: var(--pm); font-size: 0.88em; background: var(--r-surface2); padding: 1px 5px; border-radius: 2px; color: var(--r-ink);">new_program_group</code>, resume ordering for running programs untouched; full patch, harness and replication instructions are in the <a data-dc-tpl="378" href="https://github.com/SARPAT/thunderagent-churn-study" style="color: var(--r-link); text-decoration: underline 1px; text-underline-offset: 3px;">linked repository</a>. Links on this page are branch-pinned, pending the verification pass applied to pages 1–3.</span>
+      <span data-dc-tpl="379" style="font-family: var(--pm); font-size: 10.5px; letter-spacing: 0.14em; color: var(--r-faint); white-space: nowrap;">4 / 4</span>
+    </div>
+  </section>
+  </div>
+
+  <h2 data-dc-tpl="380" id="detailed-explanation" style="font-size: 30px; border-top: 2px solid var(--heading); padding-top: 1.1rem; margin-top: 4rem;">Detailed explanation</h2>
+  <p data-dc-tpl="381" style="color: var(--muted);">The report above is the claim. What follows is how I got there, including two hypotheses that failed and one result that did not replicate.</p>
+
+  <figure data-dc-tpl="382">
+    <svg data-dc-tpl="383" viewBox="0 0 760 440" role="img" aria-label="One sort rule feeding two scheduler decisions that harm opposite ends of the size distribution" style="font-family: var(--mono);">
+      <defs data-dc-tpl="384">
+        <marker data-dc-tpl="385" id="f1-h" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path data-dc-tpl="386" d="M0.5 1 L9 5 L0.5 9" fill="none" stroke="#39414d" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+        <marker data-dc-tpl="387" id="f1-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path data-dc-tpl="388" d="M0.5 1 L9 5 L0.5 9" fill="none" stroke="#1d4ed8" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+        <marker data-dc-tpl="389" id="f1-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path data-dc-tpl="390" d="M0.5 1 L9 5 L0.5 9" fill="none" stroke="#b45309" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></marker>
+      </defs>
+
+      <rect data-dc-tpl="391" x="236" y="14" width="288" height="38" rx="4" fill="none" stroke="#39414d" stroke-width="1.5" transform="rotate(-0.35 380 33)"></rect>
+      <rect data-dc-tpl="392" x="239" y="17" width="286" height="37" rx="4" fill="none" stroke="#39414d" stroke-width="0.8" opacity="0.4" transform="rotate(0.5 380 33)"></rect>
+      <text data-dc-tpl="393" x="380" y="38" text-anchor="middle" font-size="13.5" fill="#0d1117">sorted ascending by token count</text>
+
+      <path data-dc-tpl="394" d="M380 53 q -1.5 14 0.5 25" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round"></path>
+      <path data-dc-tpl="395" d="M190 79 q 96 -3 190 -1.5 q 94 1.5 190 -1" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round"></path>
+      <path data-dc-tpl="396" d="M190 78 q 1.5 12 0 24" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-h)"></path>
+      <path data-dc-tpl="397" d="M570 77 q -1.5 13 0.5 25" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-h)"></path>
+
+      <rect data-dc-tpl="398" x="92" y="108" width="196" height="46" rx="4" fill="none" stroke="#39414d" stroke-width="1.5" transform="rotate(0.4 190 131)"></rect>
+      <text data-dc-tpl="399" x="190" y="127" text-anchor="middle" font-size="14.5" font-weight="700" fill="#0d1117">ADMISSION</text>
+      <text data-dc-tpl="400" x="190" y="144" text-anchor="middle" font-size="11.5" fill="#6b7280">new programs enter</text>
+
+      <rect data-dc-tpl="401" x="472" y="108" width="196" height="46" rx="4" fill="none" stroke="#39414d" stroke-width="1.5" transform="rotate(-0.45 570 131)"></rect>
+      <text data-dc-tpl="402" x="570" y="127" text-anchor="middle" font-size="14.5" font-weight="700" fill="#0d1117">EVICTION</text>
+      <text data-dc-tpl="403" x="570" y="144" text-anchor="middle" font-size="11.5" fill="#6b7280">running programs paused</text>
+
+      <path data-dc-tpl="404" d="M190 155 q 2 14 0 26" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-h)"></path>
+      <path data-dc-tpl="405" d="M570 155 q -2 14 0 26" fill="none" stroke="#39414d" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-h)"></path>
+
+      <text data-dc-tpl="406" x="190" y="202" text-anchor="middle" font-size="12.5" fill="#1f2733">smallest admitted first</text>
+      <text data-dc-tpl="407" x="570" y="202" text-anchor="middle" font-size="12.5" fill="#1f2733">smallest evicted first</text>
+
+      <path data-dc-tpl="408" d="M190 214 q -2 14 0 26" fill="none" stroke="#1d4ed8" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-b)"></path>
+      <path data-dc-tpl="409" d="M570 214 q 2 14 0 26" fill="none" stroke="#b45309" stroke-width="1.5" stroke-linecap="round" marker-end="url(#f1-a)"></path>
+
+      <rect data-dc-tpl="410" x="72" y="248" width="236" height="62" rx="4" fill="none" stroke="#1d4ed8" stroke-width="1.6" transform="rotate(-0.3 190 279)"></rect>
+      <rect data-dc-tpl="411" x="75" y="251" width="234" height="61" rx="4" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.35" transform="rotate(0.55 190 279)"></rect>
+      <text data-dc-tpl="412" x="190" y="274" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1d4ed8">LARGE programs wait</text>
+      <text data-dc-tpl="413" x="190" y="294" text-anchor="middle" font-size="13" fill="#1d4ed8">up to 447 s to start</text>
+
+      <rect data-dc-tpl="414" x="452" y="248" width="236" height="62" rx="4" fill="none" stroke="#b45309" stroke-width="1.6" transform="rotate(0.35 570 279)"></rect>
+      <rect data-dc-tpl="415" x="455" y="251" width="234" height="61" rx="4" fill="none" stroke="#b45309" stroke-width="0.8" opacity="0.35" transform="rotate(-0.5 570 279)"></rect>
+      <text data-dc-tpl="416" x="570" y="274" text-anchor="middle" font-size="13.5" font-weight="700" fill="#b45309">SMALL programs are</text>
+      <text data-dc-tpl="417" x="570" y="294" text-anchor="middle" font-size="13" fill="#b45309">evicted 3 to 4x over</text>
+
+      <path data-dc-tpl="418" d="M190 311 q 2 12 0 22" fill="none" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round" opacity="0.7"></path>
+      <path data-dc-tpl="419" d="M570 311 q -2 12 0 22" fill="none" stroke="#b45309" stroke-width="1.2" stroke-linecap="round" opacity="0.7"></path>
+
+      <text data-dc-tpl="420" x="190" y="352" text-anchor="middle" font-size="12.5" fill="#1d4ed8">corr(size, TTFT) = +0.855</text>
+      <text data-dc-tpl="421" x="570" y="352" text-anchor="middle" font-size="12.5" fill="#b45309">corr(size, evictions) = −0.84</text>
+
+      <path data-dc-tpl="422" d="M104 382 q 276 -4 552 -2" fill="none" stroke="#e5e7eb" stroke-width="1.2"></path>
+      <text data-dc-tpl="423" x="380" y="406" text-anchor="middle" font-size="11.5" fill="#6b7280">one rule, two decision points, opposite victims</text>
+    </svg>
+    <figcaption data-dc-tpl="424">Figure 1: One ascending sort by token count feeds two scheduler decisions. Admission delays the largest programs; eviction repeatedly pauses the smallest. Blue marks the population harmed at admission, amber the population harmed at eviction, in every figure below.</figcaption>
+  </figure>
+
+  <h3 data-dc-tpl="425" id="the-setup">2. The setup</h3>
+  <ul data-dc-tpl="426">
+    <li data-dc-tpl="427"><strong data-dc-tpl="428">The rule.</strong> When KV memory fills, ThunderAgent evicts the program with the smallest context. Recompute cost scales as O(c²), so small is cheapest. <a data-dc-tpl="429" href="https://arxiv.org/html/2602.13692">Lemma 4.1</a> proves shortest-first minimizes total recompute. That is correct, and not in dispute here.</li>
+    <li data-dc-tpl="430"><strong data-dc-tpl="431">The mismatch.</strong> In GRPO, a group of rollouts shares one prompt, and advantages wait for <strong data-dc-tpl="432">all</strong> of them. The binding metric is <strong data-dc-tpl="433">makespan</strong>, the finish time of the last member. ThunderAgent optimizes mean latency.</li>
+    <li data-dc-tpl="434"><strong data-dc-tpl="435">The testbed.</strong> 1× L4, one vLLM backend, Qwen3-0.6B, synthetic programs whose tool calls are <code data-dc-tpl="436">sleep</code> calls, 43,216-token KV capacity, three seeds.</li>
+  </ul>
+  <div data-dc-tpl="437" style="background: var(--tip-bg); border-left: 3px solid var(--tip-border); border-radius: 3px; padding: 1.1rem 1.25rem; margin: 2rem 0px; font-size: 15px; line-height: 1.65;"><strong data-dc-tpl="438" style="display: block; margin-bottom: 0.35rem;">Key idea</strong>Shortest-processing-time first minimizes mean flow time. Longest-processing-time first minimizes makespan. Both halves show up below. The policy is not wrong; it is aimed at a different objective.</div>
+
+  <h3 data-dc-tpl="439" id="eviction-is-smallest-first">3. Eviction is smallest-first</h3>
+  <ul data-dc-tpl="440">
+    <li data-dc-tpl="441">The patched router logs the full candidate list at each decision. So this reads which program <em data-dc-tpl="442">was</em> chosen from a known pool; nothing is estimated.</li>
+    <li data-dc-tpl="443"><a data-dc-tpl="444" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/exact_decisions.py#L99-L108"><strong data-dc-tpl="445">40 of 40</strong> decisions</a> across three seeds picked the smallest eligible candidate, from pools of 7 to 16.<sup data-dc-tpl="446"><a data-dc-tpl="447" href="#ref-3" id="cite-3">[3]</a></sup><img data-dc-tpl="448" src="assets/fig-3.png" alt="exact_decisions.py lines 99 to 108, policy verification" style="display: block; width: 100%; height: auto; margin: 1rem 0px 0.5rem;"></li>
+    <li data-dc-tpl="449">Conditional on eligibility, <code data-dc-tpl="450">corr(size, evicted | eligible)</code> = <strong data-dc-tpl="451">−0.53 / −0.33 / −0.33</strong>.</li>
+  </ul>
+  <div data-dc-tpl="452" style="background: var(--note-bg); border-left: 3px solid var(--note-border); border-radius: 3px; padding: 1.1rem 1.25rem; margin: 2rem 0px; font-size: 15px; line-height: 1.65;"><strong data-dc-tpl="453" style="display: block; margin-bottom: 0.35rem;">Note, a near-miss</strong>An earlier configuration averaged <strong data-dc-tpl="454">1.2 candidates per decision</strong>. The scheduler was taking the only option, not choosing one, and it looked exactly like a confirmed policy. Longer tool calls raised the pool to about 11.</div>
+
+  <h3 data-dc-tpl="455" id="the-confound-controlled">4. The confound, controlled</h3>
+  <p data-dc-tpl="456">The objection: short programs cycle faster, so they are simply eligible more often. Four controls say no.</p>
+  <ul data-dc-tpl="457">
+    <li data-dc-tpl="458"><strong data-dc-tpl="459">Equal opportunity.</strong> Every program ran exactly 10 steps.</li>
+    <li data-dc-tpl="460"><strong data-dc-tpl="461">Conditioned on eligibility.</strong> The 40 of 40 result already holds the pool fixed.</li>
+    <li data-dc-tpl="462"><strong data-dc-tpl="463">Spearman plus permutation.</strong> ρ = −0.668 and −0.626; chance that all long programs escape: <strong data-dc-tpl="464">1.4e-7</strong> and <strong data-dc-tpl="465">3.9e-7</strong>.<sup data-dc-tpl="466"><a data-dc-tpl="467" href="#ref-4" id="cite-4">[4]</a></sup></li>
+    <li data-dc-tpl="468"><strong data-dc-tpl="469">The never-evicted set.</strong> Size-blind eviction puts them at mean rank 19.5 of 40. They sit at 32.4 and 33.1.</li>
+  </ul>
+  <p data-dc-tpl="470">Clearest pair: <code data-dc-tpl="471">prog-038</code> (1,833 tok) was eligible 4 times and evicted <strong data-dc-tpl="472">4 times</strong>. <code data-dc-tpl="473">prog-000</code> (7,333 tok) was eligible 5 times and evicted <strong data-dc-tpl="474">zero</strong> times.</p>
+
+  <figure data-dc-tpl="475">
+    <svg data-dc-tpl="476" viewBox="0 0 760 432" role="img" aria-label="Eligible turns and evictions for twelve programs, sorted by start tokens" style="font-family: var(--mono);">
+      <text data-dc-tpl="477" x="170" y="34" text-anchor="end" font-size="11" fill="#6b7280">start tokens</text>
+      <text data-dc-tpl="478" x="190" y="34" font-size="11" fill="#6b7280">size (0 to 8,000)</text>
+      <text data-dc-tpl="479" x="440" y="34" font-size="11" fill="#6b7280">each eligible turn</text>
+      <text data-dc-tpl="480" x="720" y="34" text-anchor="end" font-size="11" fill="#6b7280">evicted</text>
+      <line data-dc-tpl="481" x1="20" y1="44" x2="720" y2="44" stroke="#9aa1ab" stroke-width="1.2"></line>
+      <text data-dc-tpl="482" x="170" y="68" text-anchor="end" font-size="12" fill="#111827">1,500</text>
+      <rect data-dc-tpl="483" x="190" y="58" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="484" x="190" y="58" width="41.3" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="485" x="440" y="57" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="486" x="460" y="57" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="487" x="480.75" y="57.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="488" x="500.75" y="57.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="489" x="520.75" y="57.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="490" x="540.75" y="57.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="491" x="560.75" y="57.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="492" x="720" y="68" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">2 of 7</text>
+      <text data-dc-tpl="493" x="170" y="94" text-anchor="end" font-size="12" fill="#111827">1,667</text>
+      <rect data-dc-tpl="494" x="190" y="84" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="495" x="190" y="84" width="45.8" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="496" x="440" y="83" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="497" x="460.75" y="83.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="498" x="480.75" y="83.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="499" x="500.75" y="83.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="500" x="520.75" y="83.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="501" x="540.75" y="83.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="502" x="720" y="94" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 6</text>
+      <text data-dc-tpl="503" x="20" y="120" font-size="11" font-weight="700" fill="#b45309">prog-038</text>
+      <text data-dc-tpl="504" x="170" y="120" text-anchor="end" font-size="12" font-weight="700" fill="#111827">1,833</text>
+      <rect data-dc-tpl="505" x="190" y="110" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="506" x="190" y="110" width="50.4" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="507" x="440" y="109" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="508" x="460" y="109" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="509" x="480" y="109" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="510" x="500" y="109" width="14" height="14" fill="#b45309"></rect>
+      <text data-dc-tpl="511" x="720" y="120" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">4 of 4</text>
+      <text data-dc-tpl="512" x="170" y="146" text-anchor="end" font-size="12" fill="#111827">2,000</text>
+      <rect data-dc-tpl="513" x="190" y="136" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="514" x="190" y="136" width="55.0" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="515" x="440" y="135" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="516" x="460.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="517" x="480.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="518" x="500.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="519" x="520.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="520" x="540.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="521" x="560.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="522" x="580.75" y="135.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="523" x="720" y="146" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 8</text>
+      <text data-dc-tpl="524" x="170" y="172" text-anchor="end" font-size="12" fill="#111827">2,167</text>
+      <rect data-dc-tpl="525" x="190" y="162" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="526" x="190" y="162" width="59.6" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="527" x="440" y="161" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="528" x="460" y="161" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="529" x="480.75" y="161.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="530" x="500.75" y="161.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="531" x="520.75" y="161.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="532" x="720" y="172" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">2 of 5</text>
+      <text data-dc-tpl="533" x="170" y="198" text-anchor="end" font-size="12" fill="#111827">2,333</text>
+      <rect data-dc-tpl="534" x="190" y="188" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="535" x="190" y="188" width="64.2" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="536" x="440" y="187" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="537" x="460.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="538" x="480.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="539" x="500.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="540" x="520.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="541" x="540.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="542" x="560.75" y="187.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="543" x="720" y="198" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 7</text>
+      <text data-dc-tpl="544" x="170" y="224" text-anchor="end" font-size="12" fill="#111827">2,500</text>
+      <rect data-dc-tpl="545" x="190" y="214" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="546" x="190" y="214" width="68.8" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="547" x="440" y="213" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="548" x="460.75" y="213.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="549" x="480.75" y="213.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="550" x="500.75" y="213.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="551" x="520.75" y="213.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="552" x="540.75" y="213.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="553" x="720" y="224" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 6</text>
+      <text data-dc-tpl="554" x="170" y="250" text-anchor="end" font-size="12" fill="#111827">2,667</text>
+      <rect data-dc-tpl="555" x="190" y="240" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="556" x="190" y="240" width="73.3" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="557" x="440" y="239" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="558" x="460.75" y="239.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="559" x="480.75" y="239.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="560" x="500.75" y="239.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="561" x="520.75" y="239.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="562" x="720" y="250" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 5</text>
+      <text data-dc-tpl="563" x="170" y="276" text-anchor="end" font-size="12" fill="#111827">2,833</text>
+      <rect data-dc-tpl="564" x="190" y="266" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="565" x="190" y="266" width="77.9" height="12" fill="#b45309" opacity="0.85"></rect>
+      <rect data-dc-tpl="566" x="440" y="265" width="14" height="14" fill="#b45309"></rect>
+      <rect data-dc-tpl="567" x="460.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="568" x="480.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="569" x="500.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="570" x="520.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="571" x="540.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="572" x="560.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="573" x="580.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="574" x="600.75" y="265.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="575" x="720" y="276" text-anchor="end" font-size="12" font-weight="700" fill="#b45309">1 of 9</text>
+      <text data-dc-tpl="576" x="170" y="328" text-anchor="end" font-size="12" fill="#111827">3,000</text>
+      <rect data-dc-tpl="577" x="190" y="318" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="578" x="190" y="318" width="82.5" height="12" fill="#1d4ed8" opacity="0.85"></rect>
+      <rect data-dc-tpl="579" x="440.75" y="317.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="580" x="460.75" y="317.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="581" x="480.75" y="317.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="582" x="500.75" y="317.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="583" x="720" y="328" text-anchor="end" font-size="12" font-weight="700" fill="#1d4ed8">0 of 4</text>
+      <text data-dc-tpl="584" x="170" y="354" text-anchor="end" font-size="12" fill="#111827">5,833</text>
+      <rect data-dc-tpl="585" x="190" y="344" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="586" x="190" y="344" width="160.4" height="12" fill="#1d4ed8" opacity="0.85"></rect>
+      <rect data-dc-tpl="587" x="440.75" y="343.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="588" x="460.75" y="343.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="589" x="480.75" y="343.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="590" x="500.75" y="343.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="591" x="720" y="354" text-anchor="end" font-size="12" font-weight="700" fill="#1d4ed8">0 of 4</text>
+      <text data-dc-tpl="592" x="20" y="380" font-size="11" font-weight="700" fill="#1d4ed8">prog-000</text>
+      <text data-dc-tpl="593" x="170" y="380" text-anchor="end" font-size="12" font-weight="700" fill="#111827">7,333</text>
+      <rect data-dc-tpl="594" x="190" y="370" width="220" height="12" fill="#e5e7eb" opacity="0.5"></rect>
+      <rect data-dc-tpl="595" x="190" y="370" width="201.7" height="12" fill="#1d4ed8" opacity="0.85"></rect>
+      <rect data-dc-tpl="596" x="440.75" y="369.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="597" x="460.75" y="369.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="598" x="480.75" y="369.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="599" x="500.75" y="369.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <rect data-dc-tpl="600" x="520.75" y="369.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="601" x="720" y="380" text-anchor="end" font-size="12" font-weight="700" fill="#1d4ed8">0 of 5</text>
+      <line data-dc-tpl="602" x1="20" y1="287" x2="720" y2="287" stroke="#6b7280" stroke-width="1" stroke-dasharray="4 4"></line>
+      <text data-dc-tpl="603" x="190" y="302" font-size="10.5" fill="#6b7280">3,000 tokens and up: never evicted</text>
+      <rect data-dc-tpl="604" x="190" y="396" width="14" height="14" fill="#b45309"></rect>
+      <text data-dc-tpl="605" x="212" y="407" font-size="11" fill="#6b7280">evicted on that turn</text>
+      <rect data-dc-tpl="606" x="380.75" y="396.75" width="12.5" height="12.5" fill="none" stroke="#9aa1ab" stroke-width="1.5"></rect>
+      <text data-dc-tpl="607" x="402" y="407" font-size="11" fill="#6b7280">eligible, not evicted</text>
+    </svg>
+    <figcaption data-dc-tpl="608">Figure 2: Eviction given eligibility, 12 most-evicted programs in run10, sorted by start tokens. Each square is one eligible turn; filled squares are evictions. Exposure is shown directly. No program above 3,000 tokens was evicted.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="609"><strong data-dc-tpl="610">What the churn costs:</strong> about 24 s per affected program, measured within size bands (+24.5 s at 40 programs, +23.8 s at 60).<sup data-dc-tpl="611"><a data-dc-tpl="612" href="#ref-5" id="cite-5">[5]</a></sup></p>
+
+  <h3 data-dc-tpl="613" id="admission-is-smallest-first-too">5. Admission is smallest-first too</h3>
+  <ul data-dc-tpl="614">
+    <li data-dc-tpl="615">In <code data-dc-tpl="616">_resume_paused_programs</code>, waiting programs are sorted ascending <strong data-dc-tpl="617">before</strong> the split into priority groups (<a data-dc-tpl="618" href="https://github.com/ThunderAgent-org/ThunderAgent/blob/7ddc8610270e56d3b109eed8796b3a4360fc67c9/ThunderAgent/scheduler/router.py#L846">router.py#L846</a>).<sup data-dc-tpl="619"><a data-dc-tpl="620" href="#ref-1" id="cite-1">[1]</a></sup> <code data-dc-tpl="621">new_program_group</code> inherits that order.<img data-dc-tpl="622" src="assets/fig-4.png" alt="router.py lines 843 to 850, ascending sort at line 846" style="display: block; width: 100%; height: auto; margin: 1rem 0px 0.5rem;"></li>
+    <li data-dc-tpl="623">NVIDIA's Dynamo docs describe the same thing: <a data-dc-tpl="624" href="https://docs.nvidia.com/dynamo/dev/user-guides/agents/thunder-agent-program-scheduler">"it resumes the smallest-token programs first."</a><sup data-dc-tpl="625"><a data-dc-tpl="626" href="#ref-2" id="cite-2">[2]</a></sup> Two implementations, one ordering. Read it as deliberate.</li>
+    <li data-dc-tpl="627">Result (report, page 1): <code data-dc-tpl="628">corr(size, TTFT)</code> = <strong data-dc-tpl="629">+0.855 / +0.745 / +0.870</strong>, and first response ranges from 0.5 s to 404.4 s in one run.</li>
+    <li data-dc-tpl="630">Admission wait is <strong data-dc-tpl="631">59 to 71%</strong> of total program time. <code data-dc-tpl="632">corr(group size, admission span)</code> = <strong data-dc-tpl="633">+0.907</strong>, the strongest in the study.<sup data-dc-tpl="634"><a data-dc-tpl="635" href="#ref-6" id="cite-6">[6]</a></sup></li>
+  </ul>
+
+  <figure data-dc-tpl="636">
+    <svg data-dc-tpl="637" viewBox="0 0 760 430" role="img" aria-label="Horizontal stacked bars showing admission wait and execution time for eight groups" style="font-family: var(--mono);">
+      <rect data-dc-tpl="638" x="86" y="16" width="11" height="11" fill="#1d4ed8"></rect>
+      <text data-dc-tpl="639" x="103" y="26" font-size="11.5" fill="#1f2733">admission wait</text>
+      <rect data-dc-tpl="640" x="216" y="16" width="11" height="11" fill="#b45309"></rect>
+      <text data-dc-tpl="641" x="233" y="26" font-size="11.5" fill="#1f2733">execution</text>
+      <text data-dc-tpl="642" x="76" y="26" text-anchor="end" font-size="11" fill="#6b7280">group size</text>
+
+      <rect data-dc-tpl="643" x="86" y="44" width="2.2" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="644" x="88.2" y="44" width="114.8" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="645" x="76" y="59" text-anchor="end" font-size="11.5" fill="#1f2733">1,504</text>
+      <text data-dc-tpl="646" x="211" y="59" font-size="11" fill="#6b7280">104.6 s</text>
+
+      <rect data-dc-tpl="647" x="86" y="88" width="87.5" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="648" x="173.5" y="88" width="97.1" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="649" x="76" y="103" text-anchor="end" font-size="11.5" fill="#1f2733">2,442</text>
+      <text data-dc-tpl="650" x="279" y="103" font-size="11" fill="#6b7280">165.1 s</text>
+
+      <rect data-dc-tpl="651" x="86" y="132" width="149.5" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="652" x="235.5" y="132" width="73.7" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="653" x="76" y="147" text-anchor="end" font-size="11.5" fill="#1f2733">3,390</text>
+      <text data-dc-tpl="654" x="317" y="147" font-size="11" fill="#6b7280">199.6 s</text>
+
+      <rect data-dc-tpl="655" x="86" y="176" width="190.3" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="656" x="276.3" y="176" width="100.4" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="657" x="76" y="191" text-anchor="end" font-size="11.5" fill="#1f2733">4,341</text>
+      <text data-dc-tpl="658" x="385" y="191" font-size="11" fill="#6b7280">259.9 s</text>
+
+      <rect data-dc-tpl="659" x="86" y="220" width="2.2" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="660" x="88.2" y="220" width="82.1" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="661" x="76" y="235" text-anchor="end" font-size="11.5" fill="#1f2733">5,145</text>
+      <text data-dc-tpl="662" x="178" y="235" font-size="11" fill="#6b7280">75.3 s</text>
+      <text data-dc-tpl="663" x="230" y="235" font-size="10.5" fill="#6b7280">launched early, slipped in before the backlog formed</text>
+
+      <rect data-dc-tpl="664" x="86" y="264" width="302.3" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="665" x="388.3" y="264" width="71" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="666" x="76" y="279" text-anchor="end" font-size="11.5" fill="#1f2733">6,127</text>
+      <text data-dc-tpl="667" x="467" y="279" font-size="11" fill="#6b7280">333.7 s</text>
+
+      <rect data-dc-tpl="668" x="86" y="308" width="394.1" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="669" x="480.1" y="308" width="68.1" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="670" x="76" y="323" text-anchor="end" font-size="11.5" fill="#1f2733">7,124</text>
+      <text data-dc-tpl="671" x="556" y="323" font-size="11" fill="#6b7280">413.1 s</text>
+
+      <rect data-dc-tpl="672" x="86" y="352" width="500.3" height="22" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="673" x="586.3" y="352" width="79.9" height="22" fill="#b45309"></rect>
+      <text data-dc-tpl="674" x="76" y="367" text-anchor="end" font-size="11.5" fill="#1f2733">8,120</text>
+      <text data-dc-tpl="675" x="674" y="367" font-size="11" fill="#6b7280">518.5 s</text>
+      <text data-dc-tpl="676" x="94" y="367" font-size="11" fill="#ffffff">447.2 s waiting to be admitted</text>
+
+      <line data-dc-tpl="677" x1="86" y1="384" x2="690" y2="384" stroke="#9aa1ab" stroke-width="1"></line>
+      <text data-dc-tpl="678" x="86" y="400" text-anchor="middle" font-size="11" fill="#6b7280">0</text>
+      <text data-dc-tpl="679" x="197.9" y="400" text-anchor="middle" font-size="11" fill="#6b7280">100</text>
+      <text data-dc-tpl="680" x="309.7" y="400" text-anchor="middle" font-size="11" fill="#6b7280">200</text>
+      <text data-dc-tpl="681" x="421.6" y="400" text-anchor="middle" font-size="11" fill="#6b7280">300</text>
+      <text data-dc-tpl="682" x="533.4" y="400" text-anchor="middle" font-size="11" fill="#6b7280">400</text>
+      <text data-dc-tpl="683" x="645.3" y="400" text-anchor="middle" font-size="11" fill="#6b7280">500</text>
+      <text data-dc-tpl="684" x="388" y="422" text-anchor="middle" font-size="11.5" fill="#6b7280">seconds</text>
+    </svg>
+    <figcaption data-dc-tpl="685">Figure 3: Phase composition across all eight groups, seed 100. Small groups are almost all execution; large groups are almost all queue wait. The 5,145-token group launched early enough to slip in before the backlog formed.</figcaption>
+  </figure>
+
+  <ul data-dc-tpl="686">
+    <li data-dc-tpl="687">Eviction mirrors it at group level: <code data-dc-tpl="688">corr(group size, evictions)</code> = <strong data-dc-tpl="689">−0.840 / −0.841 / −0.900</strong>.<sup data-dc-tpl="690"><a data-dc-tpl="691" href="#ref-7" id="cite-7">[7]</a></sup></li>
+    <li data-dc-tpl="692"><strong data-dc-tpl="693">The scheduler has no RL-group concept.</strong> Group members share a prompt, so they have similar token counts. The sort hits <strong data-dc-tpl="694">whole groups</strong>, which is exactly the level makespan is computed at.</li>
+  </ul>
+
+  <h3 data-dc-tpl="695" id="the-trap">6. The trap</h3>
+  <p data-dc-tpl="696">After admission, <code data-dc-tpl="697">corr(size, execution)</code> is <strong data-dc-tpl="698">−0.43</strong>. Read literally, bigger contexts run faster. Two explanations tested:</p>
+  <ul data-dc-tpl="699">
+    <li data-dc-tpl="700"><strong data-dc-tpl="701">Refuted: contention.</strong> <code data-dc-tpl="702">corr(concurrency at admit, execution)</code> = −0.017 / +0.010. Controlling for it slightly <em data-dc-tpl="703">strengthens</em> the size effect.</li>
+    <li data-dc-tpl="704"><strong data-dc-tpl="705">Confirmed: eviction mediation.</strong> <code data-dc-tpl="706">corr(evictions, execution)</code> = +0.69. With eviction count held fixed, the size effect collapses from −0.43 to <strong data-dc-tpl="707">−0.13</strong>.<sup data-dc-tpl="708"><a data-dc-tpl="709" href="#ref-8" id="cite-8">[8]</a></sup></li>
+  </ul>
+
+  <figure data-dc-tpl="710">
+    <svg data-dc-tpl="711" viewBox="0 0 760 380" role="img" aria-label="Paired bars showing the size-execution correlation raw and under two controls" style="font-family: var(--mono);">
+      <rect data-dc-tpl="712" x="616" y="14" width="11" height="11" fill="#1d4ed8"></rect>
+      <text data-dc-tpl="713" x="633" y="24" font-size="11" fill="#1f2733">GRPO runs</text>
+      <rect data-dc-tpl="714" x="616" y="30" width="11" height="11" fill="#1d4ed8" fill-opacity="0.35" stroke="#1d4ed8" stroke-width="1"></rect>
+      <text data-dc-tpl="715" x="633" y="40" font-size="11" fill="#1f2733">60-program runs</text>
+
+      <line data-dc-tpl="716" x1="70" y1="60" x2="700" y2="60" stroke="#9aa1ab" stroke-width="1.4"></line>
+      <text data-dc-tpl="717" x="62" y="64" text-anchor="end" font-size="11" fill="#6b7280">0</text>
+      <text data-dc-tpl="718" x="70" y="48" font-size="11" fill="#6b7280">no effect</text>
+      <line data-dc-tpl="719" x1="70" y1="278" x2="700" y2="278" stroke="#e5e7eb" stroke-width="1"></line>
+      <text data-dc-tpl="720" x="62" y="282" text-anchor="end" font-size="11" fill="#6b7280">−0.50</text>
+      <line data-dc-tpl="721" x1="70" y1="169" x2="700" y2="169" stroke="#e5e7eb" stroke-width="1"></line>
+      <text data-dc-tpl="722" x="62" y="173" text-anchor="end" font-size="11" fill="#6b7280">−0.25</text>
+
+      <rect data-dc-tpl="723" x="149" y="60" width="46" height="187.6" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="724" x="205" y="60" width="46" height="185" fill="#1d4ed8" fill-opacity="0.35" stroke="#1d4ed8" stroke-width="1"></rect>
+      <text data-dc-tpl="725" x="172" y="264" text-anchor="middle" font-size="11" fill="#1f2733">−0.430</text>
+      <text data-dc-tpl="726" x="228" y="261" text-anchor="middle" font-size="11" fill="#6b7280">−0.424</text>
+      <text data-dc-tpl="727" x="200" y="300" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0d1117">raw</text>
+      <text data-dc-tpl="728" x="200" y="318" text-anchor="middle" font-size="11" fill="#6b7280">corr(size, execution)</text>
+
+      <rect data-dc-tpl="729" x="349" y="60" width="46" height="203.3" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="730" x="405" y="60" width="46" height="218.6" fill="#1d4ed8" fill-opacity="0.35" stroke="#1d4ed8" stroke-width="1"></rect>
+      <text data-dc-tpl="731" x="372" y="280" text-anchor="middle" font-size="11" fill="#1f2733">−0.466</text>
+      <text data-dc-tpl="732" x="428" y="295" text-anchor="middle" font-size="11" fill="#6b7280">−0.501</text>
+      <text data-dc-tpl="733" x="400" y="318" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0d1117">control: concurrency</text>
+      <text data-dc-tpl="734" x="400" y="336" text-anchor="middle" font-size="11" fill="#6b7280">refuted, effect unchanged</text>
+
+      <rect data-dc-tpl="735" x="549" y="60" width="46" height="54.5" fill="#1d4ed8"></rect>
+      <rect data-dc-tpl="736" x="605" y="60" width="46" height="38.8" fill="#1d4ed8" fill-opacity="0.35" stroke="#1d4ed8" stroke-width="1"></rect>
+      <text data-dc-tpl="737" x="572" y="131" text-anchor="middle" font-size="11" fill="#1f2733">−0.125</text>
+      <text data-dc-tpl="738" x="628" y="115" text-anchor="middle" font-size="11" fill="#6b7280">−0.089</text>
+      <text data-dc-tpl="739" x="600" y="318" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0d1117">control: eviction count</text>
+      <text data-dc-tpl="740" x="600" y="336" text-anchor="middle" font-size="11" fill="#6b7280">confirmed, 71% and 79% gone</text>
+
+      <path data-dc-tpl="741" d="M600 150 q -4 40 -2 78" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4 4" opacity="0.5"></path>
+    </svg>
+    <figcaption data-dc-tpl="742">Figure 4: The size–execution correlation, raw and under two controls. Controlling for concurrency leaves it unchanged; controlling for eviction count collapses it toward zero.</figcaption>
+  </figure>
+
+  <ul data-dc-tpl="743">
+    <li data-dc-tpl="744"><strong data-dc-tpl="745">Takeaway:</strong> large programs run faster because they are never evicted. It is the eviction finding in disguise.</li>
+    <li data-dc-tpl="746"><strong data-dc-tpl="747">Method check:</strong> the partial correlation was validated on synthetic data first (+0.056 on a null, +0.572 on a real effect).</li>
+  </ul>
+
+  <h3 data-dc-tpl="748" id="intervention-a-admission-order">7. Intervention A, admission order</h3>
+  <ul data-dc-tpl="749">
+    <li data-dc-tpl="750"><strong data-dc-tpl="751">Design.</strong> Only <code data-dc-tpl="752">new_program_group</code>'s sort changes; resume and eviction are untouched. Three arms, three seeds.</li>
+    <li data-dc-tpl="753"><strong data-dc-tpl="754">Control.</strong> Smallest-first reproduces the baseline (+0.855 on seed 100), which is what makes the other arms readable.</li>
+  </ul>
+  <p data-dc-tpl="755">Results (full table on report page 4):<sup data-dc-tpl="756"><a data-dc-tpl="757" href="#ref-9" id="cite-9">[9]</a></sup></p>
+  <ul data-dc-tpl="758">
+    <li data-dc-tpl="759"><strong data-dc-tpl="760">FIFO wins makespan and worst-group completion in all three seeds.</strong></li>
+    <li data-dc-tpl="761">Size-fairness ratio drops from about <strong data-dc-tpl="762">9.3× to 3.8×</strong>.</li>
+    <li data-dc-tpl="763">Cost: 20 to 30 s of mean group completion.</li>
+    <li data-dc-tpl="764">Largest-first's −7.1% on seed 100 did not replicate (+0.6%, −1.6%). Noise.</li>
+  </ul>
+
+  <figure data-dc-tpl="765">
+    <svg data-dc-tpl="766" viewBox="0 0 760 400" role="img" aria-label="Scatter of makespan against time-to-first-token disparity for three admission-order arms" style="font-family: var(--mono);">
+      <line data-dc-tpl="767" x1="100" y1="112" x2="690" y2="112" stroke="#e5e7eb" stroke-width="1"></line>
+      <line data-dc-tpl="768" x1="100" y1="164" x2="690" y2="164" stroke="#e5e7eb" stroke-width="1"></line>
+      <line data-dc-tpl="769" x1="100" y1="216" x2="690" y2="216" stroke="#e5e7eb" stroke-width="1"></line>
+      <line data-dc-tpl="770" x1="100" y1="268" x2="690" y2="268" stroke="#e5e7eb" stroke-width="1"></line>
+      <line data-dc-tpl="771" x1="100" y1="320" x2="690" y2="320" stroke="#9aa1ab" stroke-width="1.2"></line>
+      <line data-dc-tpl="772" x1="100" y1="50" x2="100" y2="320" stroke="#9aa1ab" stroke-width="1.2"></line>
+
+      <text data-dc-tpl="773" x="90" y="116" text-anchor="end" font-size="11" fill="#6b7280">520</text>
+      <text data-dc-tpl="774" x="90" y="168" text-anchor="end" font-size="11" fill="#6b7280">510</text>
+      <text data-dc-tpl="775" x="90" y="220" text-anchor="end" font-size="11" fill="#6b7280">500</text>
+      <text data-dc-tpl="776" x="90" y="272" text-anchor="end" font-size="11" fill="#6b7280">490</text>
+      <text data-dc-tpl="777" x="90" y="324" text-anchor="end" font-size="11" fill="#6b7280">480</text>
+      <text data-dc-tpl="778" x="22" y="185" text-anchor="middle" font-size="11.5" fill="#6b7280" transform="rotate(-90 22 185)">makespan (s)</text>
+
+      <text data-dc-tpl="779" x="218" y="342" text-anchor="middle" font-size="11" fill="#6b7280">2x</text>
+      <text data-dc-tpl="780" x="336" y="342" text-anchor="middle" font-size="11" fill="#6b7280">4x</text>
+      <text data-dc-tpl="781" x="454" y="342" text-anchor="middle" font-size="11" fill="#6b7280">6x</text>
+      <text data-dc-tpl="782" x="572" y="342" text-anchor="middle" font-size="11" fill="#6b7280">8x</text>
+      <text data-dc-tpl="783" x="690" y="342" text-anchor="middle" font-size="11" fill="#6b7280">10x</text>
+      <text data-dc-tpl="784" x="395" y="366" text-anchor="middle" font-size="11.5" fill="#6b7280">TTFT disparity, large ÷ small (lower is fairer)</text>
+
+      <circle data-dc-tpl="785" cx="648.7" cy="122.4" r="9.1" fill="#1d4ed8" fill-opacity="0.2" stroke="#1d4ed8" stroke-width="1.8"></circle>
+      <text data-dc-tpl="786" x="648.7" y="100" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d4ed8">smallest-first</text>
+      <text data-dc-tpl="787" x="648.7" y="85" text-anchor="middle" font-size="10.5" fill="#6b7280">upstream</text>
+      <text data-dc-tpl="788" x="648.7" y="148" text-anchor="middle" font-size="10.5" fill="#6b7280">mean group 272 s</text>
+
+      <circle data-dc-tpl="789" cx="324.2" cy="221.2" r="8.7" fill="#0d1117" fill-opacity="0.16" stroke="#0d1117" stroke-width="1.8"></circle>
+      <text data-dc-tpl="790" x="324.2" y="199" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0d1117">FIFO</text>
+      <text data-dc-tpl="791" x="324.2" y="247" text-anchor="middle" font-size="10.5" fill="#6b7280">mean group 292 s</text>
+
+      <circle data-dc-tpl="792" cx="188.5" cy="205.6" r="16" fill="#b45309" fill-opacity="0.2" stroke="#b45309" stroke-width="1.8"></circle>
+      <text data-dc-tpl="793" x="188.5" y="176" text-anchor="middle" font-size="12.5" font-weight="700" fill="#b45309">largest-first</text>
+      <text data-dc-tpl="794" x="188.5" y="238" text-anchor="middle" font-size="10.5" fill="#6b7280">mean group 347 s</text>
+
+      <path data-dc-tpl="795" d="M150 300 q -12 10 -16 22" fill="none" stroke="#6b7280" stroke-width="1" opacity="0.5"></path>
+      <text data-dc-tpl="796" x="158" y="304" font-size="10.5" fill="#6b7280">lower-left is better</text>
+      <text data-dc-tpl="797" x="690" y="34" text-anchor="end" font-size="10.5" fill="#6b7280">bubble area ∝ mean group completion</text>
+    </svg>
+    <figcaption data-dc-tpl="798">Figure 5: The tradeoff plane, means of three seeds. FIFO sits lowest-left. Bubble area encodes mean group completion, so the cost of leaving upstream stays visible.</figcaption>
+  </figure>
+
+  <p data-dc-tpl="799"><strong data-dc-tpl="800">Why FIFO evicts more</strong> (22.3 vs 17.7 per run):</p>
+  <ul data-dc-tpl="801">
+    <li data-dc-tpl="802"><strong data-dc-tpl="803">Refuted: KV pressure.</strong> Resident tokens at eviction were 2% <em data-dc-tpl="804">lower</em> under FIFO (62,035 vs 63,219).</li>
+    <li data-dc-tpl="805"><strong data-dc-tpl="806">Confirmed: oscillation.</strong> FIFO breaches capacity more often (21.0 vs 15.3 per run), but each breach is smaller (1.06 vs 1.15 evictions).<sup data-dc-tpl="807"><a data-dc-tpl="808" href="#ref-10" id="cite-10">[10]</a></sup></li>
+    <li data-dc-tpl="809"><strong data-dc-tpl="810">No concentration.</strong> Max per program is 2.7 vs 3.3; Gini is 0.770 vs 0.847.<sup data-dc-tpl="811"><a data-dc-tpl="812" href="#ref-11" id="cite-11">[11]</a></sup></li>
+  </ul>
+
+  <h3 data-dc-tpl="813" id="intervention-b-fatigue-aware-eviction">8. Intervention B, fatigue-aware eviction</h3>
+  <p data-dc-tpl="814">Penalize a program in the eviction ranking by how often it has already been evicted. <code data-dc-tpl="815">beta=0</code> is exact upstream; <code data-dc-tpl="816">beta=1</code> applies the penalty.</p>
+  <ul data-dc-tpl="817">
+    <li data-dc-tpl="818">Max evictions on one program: <strong data-dc-tpl="819">3.0 → 1.0</strong></li>
+    <li data-dc-tpl="820">Gini: <strong data-dc-tpl="821">0.84 → 0.75</strong></li>
+    <li data-dc-tpl="822">Throughput: <strong data-dc-tpl="823">+0.2% ± 1.1%</strong>, consistent with zero</li>
+    <li data-dc-tpl="824">Control diverged from upstream <strong data-dc-tpl="825">zero times</strong> across three seeds</li>
+  </ul>
+  <div data-dc-tpl="826" style="background: var(--note-bg); border-left: 3px solid var(--note-border); border-radius: 3px; padding: 1.1rem 1.25rem; margin: 2rem 0px; font-size: 15px; line-height: 1.65;"><strong data-dc-tpl="827" style="display: block; margin-bottom: 0.35rem;">Note, the limit</strong>This <strong data-dc-tpl="828">redistributes</strong> evictions; it does not reduce them. At 60 programs, p95 moved the wrong way by 3.8%. Worst single-step latency improved by 1.9% and 3.2%. Read it as worst-case protection, not a speedup.<sup data-dc-tpl="829"><a data-dc-tpl="830" href="#ref-12" id="cite-12">[12]</a></sup></div>
+
+  <h3 data-dc-tpl="831" id="limits">9. Limits</h3>
+  <ul data-dc-tpl="832">
+    <li data-dc-tpl="833"><strong data-dc-tpl="834">Source facts, true at any scale:</strong> eviction is smallest-first, admission is smallest-first, and there is no RL-group concept.</li>
+    <li data-dc-tpl="835"><strong data-dc-tpl="836">Theory-backed:</strong> the direction of the FIFO result.</li>
+    <li data-dc-tpl="837"><strong data-dc-tpl="838">Scale-dependent:</strong> every number in seconds. One L4, a 0.6B model, a synthetic workload, three seeds.</li>
+    <li data-dc-tpl="839"><strong data-dc-tpl="840">Not yet public:</strong> the router patches (churn instrumentation and the <code data-dc-tpl="841">ADMIT_ORDER</code> switch).</li>
+    <li data-dc-tpl="842">Full caveats are in the <a data-dc-tpl="843" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/README.md#caveats">README</a>.<sup data-dc-tpl="844"><a data-dc-tpl="845" href="#ref-13" id="cite-13">[13]</a></sup></li>
+  </ul>
+  <p data-dc-tpl="846">Next I want a multi-backend replication, since oscillation near a capacity limit changes character when the limit is per-backend. The arm comparison is the part to rerun first.</p>
+
+  
+  <div data-dc-tpl="848" style="background: var(--tip-bg); border-left: 3px solid var(--tip-border); border-radius: 3px; padding: 1.1rem 1.25rem; margin: 3rem 0px 0px; font-size: 15px; line-height: 1.65;"><strong data-dc-tpl="849" style="display: block; margin-bottom: 0.35rem;">Get in touch -&nbsp;saranshappy@gmail.com</strong>Every number links to the script that produced it, and raw logs are in the <a data-dc-tpl="850" href="https://github.com/SARPAT/thunderagent-churn-study">study repo</a>. Corrections and replications welcome, especially on multi-backend hardware. Open an issue on the repo.</div>
+  
+
+  <h2 data-dc-tpl="851" id="references">References</h2>
+  <ol data-dc-tpl="852" style="font-size: 14px; line-height: 1.7; padding-left: 1.9em;">
+    <li data-dc-tpl="853" id="ref-1" style="scroll-margin-top: 1.5rem;">ThunderAgent, <code data-dc-tpl="854">_resume_paused_programs</code> ascending sort. <a data-dc-tpl="855" href="https://github.com/ThunderAgent-org/ThunderAgent/blob/7ddc8610270e56d3b109eed8796b3a4360fc67c9/ThunderAgent/scheduler/router.py#L846" style="text-decoration: underline; word-break: break-all;">github.com/ThunderAgent-org/ThunderAgent/blob/7ddc861/ThunderAgent/scheduler/router.py#L846</a></li>
+    <li data-dc-tpl="856" id="ref-2" style="scroll-margin-top: 1.5rem;">NVIDIA Dynamo, ThunderAgent program scheduler user guide. <a data-dc-tpl="857" href="https://docs.nvidia.com/dynamo/dev/user-guides/agents/thunder-agent-program-scheduler" style="text-decoration: underline; word-break: break-all;">docs.nvidia.com/dynamo/dev/user-guides/agents/thunder-agent-program-scheduler</a></li>
+    <li data-dc-tpl="858" id="ref-3" style="scroll-margin-top: 1.5rem;">Exact eviction decisions, 40 of 40. <a data-dc-tpl="859" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/exact_decisions.py#L99-L108" style="text-decoration: underline; word-break: break-all;">analysis/exact_decisions.py#L99-L108</a></li>
+    <li data-dc-tpl="860" id="ref-4" style="scroll-margin-top: 1.5rem;">Exposure control, Spearman and permutation tests. <a data-dc-tpl="861" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/exposure_control.py" style="text-decoration: underline; word-break: break-all;">analysis/exposure_control.py</a></li>
+    <li data-dc-tpl="862" id="ref-5" style="scroll-margin-top: 1.5rem;">Within-band harm estimate. <a data-dc-tpl="863" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/harm_analysis.py" style="text-decoration: underline; word-break: break-all;">analysis/harm_analysis.py</a></li>
+    <li data-dc-tpl="864" id="ref-6" style="scroll-margin-top: 1.5rem;">Admission wait vs execution time. <a data-dc-tpl="865" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/separate_effects.py#L76-L85" style="text-decoration: underline; word-break: break-all;">analysis/separate_effects.py#L76-L85</a></li>
+    <li data-dc-tpl="866" id="ref-7" style="scroll-margin-top: 1.5rem;">Group-level eviction correlations. <a data-dc-tpl="867" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/grpo_analysis.py" style="text-decoration: underline; word-break: break-all;">analysis/grpo_analysis.py</a></li>
+    <li data-dc-tpl="868" id="ref-8" style="scroll-margin-top: 1.5rem;">Partial correlation and mediation. <a data-dc-tpl="869" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/why_faster.py#L96-L103" style="text-decoration: underline; word-break: break-all;">analysis/why_faster.py#L96-L103</a></li>
+    <li data-dc-tpl="870" id="ref-9" style="scroll-margin-top: 1.5rem;">Admission-order arm comparison. <a data-dc-tpl="871" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/compare_admission.py" style="text-decoration: underline; word-break: break-all;">analysis/compare_admission.py</a></li>
+    <li data-dc-tpl="872" id="ref-10" style="scroll-margin-top: 1.5rem;">Capacity breaches and evictions per breach. <a data-dc-tpl="873" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/burst_check.py#L37-L46" style="text-decoration: underline; word-break: break-all;">analysis/burst_check.py#L37-L46</a></li>
+    <li data-dc-tpl="874" id="ref-11" style="scroll-margin-top: 1.5rem;">Concentration checks, max per program and Gini. <a data-dc-tpl="875" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/why_more_evictions.py" style="text-decoration: underline; word-break: break-all;">analysis/why_more_evictions.py</a></li>
+    <li data-dc-tpl="876" id="ref-12" style="scroll-margin-top: 1.5rem;">Fatigue-aware eviction sweep. <a data-dc-tpl="877" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/analysis/sweep_compare.py" style="text-decoration: underline; word-break: break-all;">analysis/sweep_compare.py</a></li>
+    <li data-dc-tpl="878" id="ref-13" style="scroll-margin-top: 1.5rem;">Study README, full caveat list. <a data-dc-tpl="879" href="https://github.com/SARPAT/thunderagent-churn-study/blob/fa29ebc/README.md#caveats" style="text-decoration: underline; word-break: break-all;">README caveats</a></li>
+  </ol></article></div></div>
+
+
+
+</body></html>
