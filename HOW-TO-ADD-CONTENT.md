@@ -11,7 +11,7 @@ No build step. No framework. Just edit HTML and push.
 | I want to...                        | File to open                                      |
 |-------------------------------------|---------------------------------------------------|
 | Add a new blog post                 | drop file in `blogs/` + edit `blogs.html`         |
-| Add a new experiment/research report | drop file in `experiments/` + edit `experiments.html` |
+| Add a new research/experiment report | drop file in `experiments/` + edit `experiments.html` |
 | Add a new book                      | `readings/books.html` + create new file in `readings/books/` |
 | Add a new read to an existing book  | `readings/books/your-book-file.html`              |
 | Add a new paper                     | `readings/research-papers.html` + create new file in `readings/papers/` |
@@ -121,9 +121,9 @@ Same `<li>` block, but point the href at the full URL and add `target="_blank"`:
 
 ---
 
-## 2. ADD A NEW EXPERIMENT / RESEARCH REPORT
+## 2. ADD A NEW RESEARCH / EXPERIMENT REPORT
 
-The Experiments/Research section works exactly like Blogs — same publishing
+The Research/Experiments section works exactly like Blogs — same publishing
 flow, same file layout, same `entry-list` markup. It exists as a separate
 section so casual write-ups (blogs) stay apart from the odder, more
 exploratory stuff (experiments and research reports).
@@ -349,7 +349,7 @@ SARPAT.github.io/
 ├── index.html              ← Home page
 ├── readings.html           ← Readings hub
 ├── blogs.html              ← Blogs list
-├── experiments.html        ← Experiments/Research list
+├── experiments.html        ← Research/Experiments list
 ├── style.css               ← Shared styles (do not edit unless you know what you are doing)
 ├── HOW-TO-ADD-CONTENT.md  ← This file
 ├── docs/                   ← CP markdown files (for reference only)
@@ -359,7 +359,7 @@ SARPAT.github.io/
 │   │   ├── styles/
 │   │   └── assets/figures/
 │   └── _paste-into-export.html   ← Back-link snippet, not a post
-├── experiments/             ← Published experiment/research reports (same pattern as blogs/)
+├── experiments/             ← Published research/experiment reports (same pattern as blogs/)
 │   └── _paste-into-export.html   ← Back-link snippet, not a report
 └── readings/
     ├── books.html          ← Books list
