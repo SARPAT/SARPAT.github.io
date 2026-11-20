@@ -1,0 +1,5 @@
+# GitHub Pages builds this site with Jekyll, which also turns Markdown files into
+# public pages. Keep the internal runbook and build notes off the live site.
+exclude:
+  - HOW-TO-ADD-CONTENT.md
+  - docs
